@@ -4097,6 +4097,9 @@ reinit:
         block.num--;
         /* Only process if not duplicate block */
         if (updated_block) {
+          /* Update last_used to prevent premature timeout during long transfers */
+          coap_ticks(&lg_crcv->last_used);
+
           if ((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) || (block.bert && !context->runtime_read)) {
             if (size2 < saved_offset + length) {
               size2 = saved_offset + length;
