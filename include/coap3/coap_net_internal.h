@@ -48,6 +48,12 @@ struct coap_queue_t {
  * The CoAP stack's global state is stored in a coap_context_t object.
  */
 struct coap_context_t {
+  void *runtime_io;
+  coap_runtime_read_t runtime_read;
+  coap_runtime_write_t runtime_write;
+  coap_runtime_verify_t runtime_verify;
+  coap_runtime_replay_t runtime_replay;
+  size_t runtime_maximum_pdu;
   coap_opt_filter_t known_options;
 #if COAP_SERVER_SUPPORT
   coap_resource_t *resources; /**< hash table or list of known

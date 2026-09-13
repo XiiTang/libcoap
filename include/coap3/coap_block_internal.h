@@ -174,6 +174,8 @@ struct coap_lg_xmit_t {
  */
 struct coap_lg_crcv_t {
   struct coap_lg_crcv_t *next;
+  uint8_t runtime_multicast; /* 1 collection template, 2 responder transfer */
+  coap_address_t runtime_peer;
   uint8_t observe[3];    /**< Observe data (if observe_set) (only 24 bits) */
   uint8_t observe_length;/**< Length of observe data */
   uint8_t observe_set;   /**< Set if this is an observe receive PDU */

@@ -1266,6 +1266,12 @@ coap_client_delay_first(coap_session_t *session) {
           if (session->state == COAP_SESSION_STATE_CSM) {
             coap_log_debug("** %s: timeout waiting for CSM response\n",
                            coap_session_str(session));
+            if (session->context->runtime_read) {
+              coap_session_disconnected_lkd(session, COAP_NACK_NOT_DELIVERABLE);
+              session->delay_recursive = 0;
+              coap_session_release_lkd(session);
+              return 0;
+            }
             session->csm_not_seen = 1;
             coap_session_connected(session);
           } else {
@@ -1645,7 +1651,8 @@ coap_send_lkd(coap_session_t *session, coap_pdu_t *pdu) {
     }
   }
   if (session->sock.flags & COAP_SOCKET_MULTICAST)
-    coap_address_copy(&session->addr_info.remote, &session->sock.mcast_addr);
+    if (!session->context->runtime_read)
+      coap_address_copy(&session->addr_info.remote, &session->sock.mcast_addr);
 
 #if COAP_Q_BLOCK_SUPPORT
   /* See if large xmit using Q-Block1 (but not testing Q-Block1) */
@@ -2190,7 +2197,8 @@ coap_read_session(coap_context_t *ctx, coap_session_t *session, coap_tick_t now)
             /* Header now all in */
             size_t size = coap_pdu_parse_size(session->proto, session->read_header,
                                               hdr_size + tok_ext_bytes);
-            if (size > COAP_DEFAULT_MAX_PDU_RX_SIZE) {
+            if (size > COAP_DEFAULT_MAX_PDU_RX_SIZE ||
+                (ctx->runtime_read && size > ctx->runtime_maximum_pdu)) {
               coap_log_warn("** %s: incoming PDU length too large (%zu > %lu)\n",
                             coap_session_str(session),
                             size, COAP_DEFAULT_MAX_PDU_RX_SIZE);
@@ -3975,7 +3983,8 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
 #endif /* COAP_SERVER_SUPPORT */
     if (decrypt) {
       /* find message id in sendqueue to stop retransmission and get sent */
-      coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
+      if (!context->runtime_replay)
+        coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
       /* Bump ref so pdu is not freed of, and keep a pointer to it */
       orig_pdu = pdu;
       coap_pdu_reference_lkd(orig_pdu);
@@ -3988,6 +3997,8 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
         coap_delete_pdu_lkd(orig_pdu);
         return;
       } else {
+        if (context->runtime_replay)
+          coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
         session->oscore_encryption = 1;
         pdu = dec_pdu;
       }

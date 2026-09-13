@@ -45,6 +45,22 @@
  * @{
  */
 
+/* Controlled client transport. Install before creating any session. All callbacks
+ * execute on the context owner thread. read/write return 0 for would-block,
+ * negative for terminal failure. No socket or DNS is created in this mode. */
+typedef ssize_t (*coap_runtime_read_t)(void *, uint8_t *, size_t, coap_address_t *);
+typedef ssize_t (*coap_runtime_write_t)(void *, const uint8_t *, size_t, const coap_address_t *);
+typedef int (*coap_runtime_verify_t)(void *, const uint8_t *const *, const size_t *, size_t);
+typedef int (*coap_runtime_replay_t)(void *, const uint8_t *, size_t, uint64_t, uint64_t, uint8_t);
+int coap_session_forget_runtime_token(coap_session_t *, const uint8_t *, size_t);
+void coap_session_set_runtime_peer(coap_session_t *, const coap_address_t *);
+int coap_context_set_runtime_io(coap_context_t *, void *, coap_runtime_read_t,
+                               coap_runtime_write_t, size_t maximum_pdu);
+void coap_context_set_runtime_verify(coap_context_t *, coap_runtime_verify_t);
+void coap_context_set_runtime_replay(coap_context_t *, coap_runtime_replay_t);
+int coap_context_restore_runtime_replay(coap_context_t *, const uint8_t *, size_t,
+                                       uint64_t, uint64_t, uint8_t);
+
 typedef enum coap_response_t {
   COAP_RESPONSE_FAIL, /**< Response not liked - send CoAP RST packet */
   COAP_RESPONSE_OK    /**< Response is fine */

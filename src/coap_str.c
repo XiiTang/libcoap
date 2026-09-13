@@ -44,6 +44,7 @@ coap_new_string(size_t size) {
 
 void
 coap_delete_string(coap_string_t *s) {
+  if (s) { volatile uint8_t *p = (volatile uint8_t *)s->s; size_t n = s->length; while (n--) *p++ = 0; }
   coap_free_type(COAP_STRING, s);
 }
 
@@ -59,6 +60,7 @@ coap_new_str_const(const uint8_t *data, size_t size) {
 
 void
 coap_delete_str_const(coap_str_const_t *s) {
+  if (s) { volatile uint8_t *p = (volatile uint8_t *)s->s; size_t n = s->length; while (n--) *p++ = 0; }
   coap_free_type(COAP_STRING, s);
 }
 
@@ -103,6 +105,7 @@ coap_resize_binary(coap_binary_t *s, size_t size) {
 
 void
 coap_delete_binary(coap_binary_t *s) {
+  if (s) { volatile uint8_t *p = (volatile uint8_t *)s->s; size_t n = s->length; while (n--) *p++ = 0; }
   coap_free_type(COAP_STRING, s);
 }
 
@@ -119,5 +122,6 @@ coap_new_bin_const(const uint8_t *data, size_t size) {
 
 void
 coap_delete_bin_const(coap_bin_const_t *s) {
+  if (s) { volatile uint8_t *p = (volatile uint8_t *)s->s; size_t n = s->length; while (n--) *p++ = 0; }
   coap_free_type(COAP_STRING, s);
 }

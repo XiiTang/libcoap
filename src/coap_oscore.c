@@ -441,9 +441,10 @@ coap_oscore_new_pdu_encrypted_lkd(coap_session_t *session,
     if (osc_ctx->save_seq_num_func) {
       if (osc_ctx->sender_context->seq > osc_ctx->sender_context->next_seq) {
         /* Only update at ssn_freq rate */
-        osc_ctx->sender_context->next_seq += osc_ctx->ssn_freq;
-        osc_ctx->save_seq_num_func(osc_ctx->sender_context->next_seq,
-                                   osc_ctx->save_seq_num_func_param);
+        uint64_t reserved = osc_ctx->sender_context->seq + osc_ctx->ssn_freq;
+        if (!osc_ctx->save_seq_num_func(reserved, osc_ctx->save_seq_num_func_param))
+          goto error;
+        osc_ctx->sender_context->next_seq = reserved;
       }
     }
   } else {
@@ -820,6 +821,9 @@ fail_resp:
 coap_pdu_t *
 coap_oscore_decrypt_pdu(coap_session_t *session,
                         coap_pdu_t *pdu) {
+  uint64_t runtime_seq = 0, runtime_window = 0;
+  uint8_t runtime_initial = 0;
+  int runtime_snapshot = 0;
   coap_pdu_t *decrypt_pdu = NULL;
   coap_pdu_t *plain_pdu = NULL;
   const uint8_t *osc_value; /* value of OSCORE option */
@@ -1040,6 +1044,10 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
     session->recipient_ctx = rcp_ctx;
     snd_ctx = osc_ctx->sender_context;
 
+    if (session->context->runtime_replay) {
+      runtime_seq = rcp_ctx->last_seq; runtime_window = rcp_ctx->sliding_window;
+      runtime_initial = rcp_ctx->initial_state; runtime_snapshot = 1;
+    }
     /*
      * 8.2 Step 3.
      * Verify Partial IV is not duplicated.
@@ -1047,7 +1055,7 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
      * Requires in COSE object as appropriate
      *   partial_iv (as received)
      */
-    if (rcp_ctx->initial_state == 0 &&
+    if ((rcp_ctx->initial_state == 0 || session->context->runtime_replay) &&
         !oscore_validate_sender_seq(rcp_ctx, cose)) {
       coap_log_warn("OSCORE: Replayed or old message\n");
       build_and_send_error_pdu(session,
@@ -1242,13 +1250,19 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
      * Compose the AEAD nonce.
      */
     cose_encrypt0_set_key_id(cose, rcp_ctx->recipient_id);
+    if (session->context->runtime_replay) {
+      runtime_seq = rcp_ctx->last_seq; runtime_window = rcp_ctx->sliding_window;
+      runtime_initial = rcp_ctx->initial_state; runtime_snapshot = 1;
+    }
     if (cose->partial_iv.length == 0) {
+      if (session->context->runtime_replay && association->runtime_response_seen)
+        goto error_no_ack;
       cose_encrypt0_set_partial_iv(cose, association->partial_iv);
       cose_encrypt0_set_nonce(cose, association->nonce);
     } else {
       uint64_t last_seq;
 
-      if (rcp_ctx->initial_state == 0 &&
+      if ((rcp_ctx->initial_state == 0 || session->context->runtime_replay) &&
           !oscore_validate_sender_seq(rcp_ctx, cose)) {
         coap_log_warn("OSCORE: Replayed or old message\n");
         goto error;
@@ -1653,6 +1667,15 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
     }
   }
 #endif /* COAP_CLIENT_SUPPORT */
+  if (session->context->runtime_replay &&
+      !session->context->runtime_replay(session->context->runtime_io,
+         rcp_ctx->recipient_id->s, rcp_ctx->recipient_id->length,
+         rcp_ctx->last_seq, rcp_ctx->sliding_window, rcp_ctx->initial_state)) {
+    oscore_roll_back_seq(rcp_ctx);
+    goto error_no_ack;
+  }
+  if (association && !coap_request && !got_resp_piv && session->context->runtime_replay)
+    association->runtime_response_seen = 1;
   if (association && association->is_observe == 0)
     oscore_delete_association(session, association);
   return decrypt_pdu;
@@ -1660,7 +1683,9 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
 error:
   coap_send_ack_lkd(session, pdu);
 error_no_ack:
-  if (association && association->is_observe == 0)
+  if (runtime_snapshot) {rcp_ctx->last_seq = runtime_seq; rcp_ctx->sliding_window = runtime_window; rcp_ctx->initial_state = runtime_initial;}
+  /* Unauthenticated traffic must not consume a live request association. */
+  if (association && association->is_observe == 0 && !session->context->runtime_replay)
     oscore_delete_association(session, association);
   coap_delete_pdu_lkd(decrypt_pdu);
   coap_delete_pdu_lkd(plain_pdu);
@@ -2305,3 +2330,24 @@ coap_delete_oscore_recipient(coap_context_t *context,
 }
 
 #endif /* !COAP_OSCORE_SUPPORT */
+
+#if COAP_OSCORE_SUPPORT
+int coap_context_restore_runtime_replay(coap_context_t *ctx, const uint8_t *id,
+                                        size_t len, uint64_t seq, uint64_t window,
+                                        uint8_t initial) {
+  oscore_ctx_t *osc;
+  oscore_recipient_ctx_t *recipient;
+  for (osc = ctx->p_osc_ctx; osc; osc = osc->next) {
+    for (recipient = osc->recipient_chain; recipient; recipient = recipient->next_recipient) {
+      if (recipient->recipient_id->length == len &&
+          (!len || memcmp(recipient->recipient_id->s, id, len) == 0)) {
+        recipient->last_seq = seq;
+        recipient->sliding_window = window;
+        recipient->initial_state = initial;
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+#endif

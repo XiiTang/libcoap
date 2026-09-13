@@ -2441,6 +2441,36 @@ tls_verify_call_back(int preverify_ok, X509_STORE_CTX *ctx) {
   char *cn = x509 ? get_san_or_cn_from_cert(x509) : NULL;
   int keep_preverify_ok = preverify_ok;
 
+  /* Trust belongs to the embedding Runtime. Defer chain decisions to the leaf
+   * callback and pass the peer's complete presented chain, never only its CN. */
+  if (session && session->context->runtime_verify) {
+    int accepted = 0;
+    size_t count = 0, lengths[16];
+    uint8_t *certs[16] = {0};
+    STACK_OF(X509) *chain = SSL_get_peer_cert_chain(ssl);
+    int n = chain ? sk_X509_num(chain) : 0;
+    OPENSSL_free(cn);
+    if (depth != 0) return 1;
+    if (n <= 0 || n > 16) return 0;
+    for (int i = 0; i < n; i++) {
+      int length = i2d_X509(sk_X509_value(chain, i), NULL);
+      unsigned char *out;
+      if (length <= 0 || length > 65536) goto runtime_done;
+      certs[count] = OPENSSL_malloc((size_t)length);
+      if (!certs[count]) goto runtime_done;
+      lengths[count] = (size_t)length;
+      out = certs[count++];
+      if (i2d_X509(sk_X509_value(chain, i), &out) != length) goto runtime_done;
+    }
+    accepted = session->context->runtime_verify(session->context->runtime_io,
+                    (const uint8_t *const *)certs, lengths, count);
+  runtime_done:
+    for (size_t i = 0; i < count; i++) OPENSSL_free(certs[i]);
+    if (!accepted) X509_STORE_CTX_set_error(ctx, X509_V_ERR_CERT_REJECTED);
+    return accepted == 1;
+  }
+
+
   coap_dtls_log(COAP_LOG_DEBUG, "depth %d error %x preverify %d cert '%s'\n",
                 depth, err, preverify_ok, cn);
   if (!setup_data) {

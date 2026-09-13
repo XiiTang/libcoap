@@ -1560,7 +1560,12 @@ release_1:
 
 #if !defined(COAP_EPOLL_SUPPORT) && !defined(WITH_LWIP) && !defined(RIOT_VERSION)
     assert(s->ref > 1);
-    if (s->sock.flags & (COAP_SOCKET_WANT_READ |
+    if (ctx->runtime_read) {
+      if (s->sock.flags != COAP_SOCKET_EMPTY) {
+        s->sock.flags |= COAP_SOCKET_CAN_READ;
+        if (s->sock.flags & COAP_SOCKET_WANT_WRITE) s->sock.flags |= COAP_SOCKET_CAN_WRITE;
+      }
+    } else if (s->sock.flags & (COAP_SOCKET_WANT_READ |
                          COAP_SOCKET_WANT_WRITE |
                          COAP_SOCKET_WANT_CONNECT)) {
       if (*num_sockets < max_sockets)
@@ -1622,6 +1627,7 @@ coap_io_process_with_fds_lkd(coap_context_t *ctx, uint32_t timeout_ms,
 
 #ifndef COAP_EPOLL_SUPPORT
 
+  if (ctx->runtime_read && timeout_ms != COAP_IO_NO_WAIT && (timeout_ms == COAP_IO_WAIT || timeout_ms > 10)) timeout_ms = 10;
   timeout = coap_io_prepare_io_lkd(ctx, ctx->sockets,
                                    (sizeof(ctx->sockets) / sizeof(ctx->sockets[0])),
                                    &ctx->num_sockets, before);

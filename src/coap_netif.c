@@ -17,6 +17,25 @@
 #include "coap3/coap_libcoap_build.h"
 #include "coap3/coap_session_internal.h"
 
+int
+coap_context_set_runtime_io(coap_context_t *ctx, void *data,
+                            coap_runtime_read_t read, coap_runtime_write_t write,
+                            size_t maximum_pdu) {
+  if (!ctx || !read || !write || maximum_pdu < 64 || ctx->sessions)
+    return 0;
+  ctx->runtime_io = data;
+  ctx->runtime_read = read;
+  ctx->runtime_write = write;
+  ctx->runtime_maximum_pdu = maximum_pdu;
+  return 1;
+}
+void coap_context_set_runtime_verify(coap_context_t *ctx, coap_runtime_verify_t verify) {
+  ctx->runtime_verify = verify;
+}
+void coap_context_set_runtime_replay(coap_context_t *ctx, coap_runtime_replay_t replay) {
+  ctx->runtime_replay = replay;
+}
+
 /*
  * return 1 netif still in use.
  *        0 netif no longer available.
@@ -52,6 +71,14 @@ coap_netif_dgrm_listen(coap_endpoint_t *endpoint,
 int
 coap_netif_dgrm_connect(coap_session_t *session, const coap_address_t *local_if,
                         const coap_address_t *server, int default_port) {
+  if (session->context->runtime_read) {
+    session->addr_info.remote = *server;
+    if (local_if) session->addr_info.local = *local_if;
+    session->sock.fd = COAP_INVALID_SOCKET;
+    session->sock.flags = COAP_SOCKET_NOT_EMPTY | COAP_SOCKET_CONNECTED | COAP_SOCKET_WANT_READ;
+    if (coap_is_mcast(server)) {session->sock.flags |= COAP_SOCKET_MULTICAST; session->sock.mcast_addr = *server;}
+    return 1;
+  }
   if (!coap_socket_connect_udp(&session->sock, local_if, server,
                                default_port,
                                &session->addr_info.local,
@@ -73,6 +100,15 @@ coap_netif_dgrm_read(coap_session_t *session, coap_packet_t *packet) {
   ssize_t bytes_read;
   int keep_errno;
 
+  if (session->context->runtime_read) {
+    session->sock.flags &= ~COAP_SOCKET_CAN_READ;
+    packet->addr_info = session->addr_info;
+    bytes_read = session->context->runtime_read(session->context->runtime_io,
+                  packet->payload, packet->length, &packet->addr_info.remote);
+    if (bytes_read >= 0) packet->length = (size_t)bytes_read;
+    if (bytes_read > 0) session->addr_info.remote = packet->addr_info.remote;
+    return bytes_read;
+  }
   bytes_read = coap_socket_recv(&session->sock, packet);
   keep_errno = errno;
   if (bytes_read == -1) {
@@ -135,6 +171,9 @@ coap_netif_dgrm_write(coap_session_t *session, const uint8_t *data,
   }
 #endif /* COAP_SERVER_SUPPORT */
 
+  if (session->context->runtime_write)
+    return session->context->runtime_write(session->context->runtime_io, data,
+                                           datalen, &session->addr_info.remote);
   bytes_written = coap_socket_send(sock, session, data, datalen);
   keep_errno = errno;
   if (bytes_written <= 0) {
@@ -186,6 +225,14 @@ int
 coap_netif_strm_connect1(coap_session_t *session,
                          const coap_address_t *local_if,
                          const coap_address_t *server, int default_port) {
+  if (session->context->runtime_read) {
+    session->addr_info.remote = *server;
+    if (local_if) session->addr_info.local = *local_if;
+    session->sock.fd = COAP_INVALID_SOCKET;
+    session->sock.flags = COAP_SOCKET_NOT_EMPTY | COAP_SOCKET_CONNECTED | COAP_SOCKET_WANT_READ;
+    if (coap_is_mcast(server)) {session->sock.flags |= COAP_SOCKET_MULTICAST; session->sock.mcast_addr = *server;}
+    return 1;
+  }
   if (!coap_socket_connect_tcp1(&session->sock, local_if, server,
                                 default_port,
                                 &session->addr_info.local,
@@ -197,6 +244,7 @@ coap_netif_strm_connect1(coap_session_t *session,
 
 int
 coap_netif_strm_connect2(coap_session_t *session) {
+  if (session->context->runtime_read) return 1;
   if (!coap_socket_connect_tcp2(&session->sock,
                                 &session->addr_info.local,
                                 &session->addr_info.remote)) {
@@ -213,6 +261,10 @@ coap_netif_strm_connect2(coap_session_t *session) {
  */
 ssize_t
 coap_netif_strm_read(coap_session_t *session, uint8_t *data, size_t datalen) {
+  if (session->context->runtime_read) {
+    session->sock.flags &= ~COAP_SOCKET_CAN_READ;
+    return session->context->runtime_read(session->context->runtime_io, data, datalen, NULL);
+  }
   ssize_t bytes_read = coap_socket_read(&session->sock, data, datalen);
   int keep_errno = errno;
 
@@ -235,6 +287,13 @@ coap_netif_strm_read(coap_session_t *session, uint8_t *data, size_t datalen) {
 ssize_t
 coap_netif_strm_write(coap_session_t *session, const uint8_t *data,
                       size_t datalen) {
+  if (session->context->runtime_write) {
+    ssize_t n = session->context->runtime_write(session->context->runtime_io, data, datalen, NULL);
+    if (n < (ssize_t)datalen) session->sock.flags |= COAP_SOCKET_WANT_WRITE;
+    else session->sock.flags &= ~COAP_SOCKET_WANT_WRITE;
+    session->sock.flags &= ~COAP_SOCKET_CAN_WRITE;
+    return n;
+  }
   ssize_t bytes_written = coap_socket_write(&session->sock, data, datalen);
   int keep_errno = errno;
 
@@ -258,6 +317,10 @@ coap_netif_strm_write(coap_session_t *session, const uint8_t *data,
 
 void
 coap_netif_close(coap_session_t *session) {
+  if (session->context->runtime_read) {
+    session->sock.flags = COAP_SOCKET_EMPTY;
+    return;
+  }
   if (coap_netif_available(session))
     coap_socket_close(&session->sock);
 }

@@ -1489,6 +1489,7 @@ coap_block_check_lg_crcv_timeouts(coap_session_t *session, coap_tick_t now,
 #endif /* COAP_Q_BLOCK_SUPPORT */
     /* Used for Block2 and Q-Block2 */
 check_expire:
+    if (lg_crcv->runtime_multicast == 1) continue;
     if (!lg_crcv->observe_set && lg_crcv->last_used &&
         lg_crcv->last_used + partial_timeout <= now) {
 #if COAP_Q_BLOCK_SUPPORT
@@ -2229,6 +2230,12 @@ coap_block_new_lg_crcv(coap_session_t *session, coap_pdu_t *pdu,
                     pdu->data ?
                     pdu->used_size - (pdu->data - pdu->token) : 0;
 
+  if (session->context->runtime_read) {
+    coap_lg_crcv_t *entry;
+    size_t count = 0;
+    LL_FOREACH(session->lg_crcv, entry) count++;
+    if (count >= 256) return NULL;
+  }
   lg_crcv = coap_malloc_type(COAP_LG_CRCV, sizeof(coap_lg_crcv_t));
 
   if (lg_crcv == NULL)
@@ -2239,6 +2246,8 @@ coap_block_new_lg_crcv(coap_session_t *session, coap_pdu_t *pdu,
                  STATE_TOKEN_BASE(state_token));
   memset(lg_crcv, 0, sizeof(coap_lg_crcv_t));
   lg_crcv->initial = 1;
+  if (session->context->runtime_read && coap_is_mcast(&session->addr_info.remote))
+    lg_crcv->runtime_multicast = 1;
   coap_ticks(&lg_crcv->last_used);
   /* Set up skeletal PDU to use as a basis for all the subsequent blocks */
   memcpy(&lg_crcv->pdu, pdu, sizeof(lg_crcv->pdu));
@@ -2253,6 +2262,7 @@ coap_block_new_lg_crcv(coap_session_t *session, coap_pdu_t *pdu,
   }
   lg_crcv->pdu.token += lg_crcv->pdu.max_hdr_size;
   memcpy(lg_crcv->pdu.token, pdu->token, token_options);
+  lg_crcv->pdu.actual_token.s = lg_crcv->pdu.token + (pdu->actual_token.s - pdu->token);
   if (lg_crcv->pdu.data) {
     lg_crcv->pdu.data = lg_crcv->pdu.token + token_options;
     assert(pdu->data);
@@ -3739,6 +3749,20 @@ coap_handle_response_get_block(coap_context_t *context,
       continue;
     }
 
+    if (lg_crcv->runtime_multicast == 2 &&
+        !coap_address_equals(&lg_crcv->runtime_peer, &session->addr_info.remote))
+      continue;
+    if (lg_crcv->runtime_multicast == 1) {
+      coap_lg_crcv_t *child = coap_block_new_lg_crcv(session, &lg_crcv->pdu, NULL);
+      if (!child) {
+        coap_handle_event_lkd(context, COAP_EVENT_PARTIAL_BLOCK, session);
+        return 1;
+      }
+      child->runtime_multicast = 2;
+      child->runtime_peer = session->addr_info.remote;
+      LL_PREPEND(session->lg_crcv, child);
+      return coap_handle_response_get_block(context, session, sent, rcvd, COAP_RECURSE_NO);
+    }
     /* lg_crcv found */
 
     if (COAP_RESPONSE_CLASS(rcvd->code) == 2) {
@@ -3927,7 +3951,8 @@ reinit:
             lg_crcv->rec_blocks.latest_payload_set = this_payload_set;
 #endif /* COAP_Q_BLOCK_SUPPORT */
             /* Update list of blocks received */
-            if (!update_received_blocks(&lg_crcv->rec_blocks, block.num, block.m)) {
+            if (!update_received_blocks(&lg_crcv->rec_blocks, block.num,
+                                        block.m || (block.bert && offset + chunk < saved_offset + length))) {
               coap_handle_event_lkd(context, COAP_EVENT_PARTIAL_BLOCK, session);
               goto fail_resp;
             }
@@ -3941,7 +3966,7 @@ reinit:
         block.num--;
         /* Only process if not duplicate block */
         if (updated_block) {
-          if ((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) || block.bert) {
+          if ((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) || (block.bert && !context->runtime_read)) {
             if (size2 < saved_offset + length) {
               size2 = saved_offset + length;
             }
@@ -4015,7 +4040,7 @@ reinit:
               if (coap_send_internal(session, pdu) == COAP_INVALID_MID)
                 goto fail_resp;
             }
-            if ((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) ||  block.bert)
+            if ((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) || (block.bert && !context->runtime_read))
               goto skip_app_handler;
 
             /* need to put back original token into rcvd */
@@ -4042,7 +4067,7 @@ reinit:
 #if COAP_Q_BLOCK_SUPPORT
 give_to_app:
 #endif /* COAP_Q_BLOCK_SUPPORT */
-          if ((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) || block.bert) {
+          if ((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) || (block.bert && !context->runtime_read)) {
             /* Pretend that there is no block */
             coap_remove_option(rcvd, block_opt);
             if (lg_crcv->observe_set) {
@@ -4313,3 +4338,70 @@ coap_check_update_token(coap_session_t *session, coap_pdu_t *pdu) {
   }
 }
 #endif /* ! COAP_CLIENT_SUPPORT */
+#if COAP_CLIENT_SUPPORT
+/* Resolve a blockwise state's public token without modifying the wire PDU. */
+static int
+runtime_token_matches(coap_session_t *session, const coap_bin_const_t *wire,
+                       const coap_bin_const_t *app) {
+  coap_lg_crcv_t *rcv;
+  coap_lg_xmit_t *xmit;
+  uint64_t base;
+  if (coap_binary_equal(wire, app)) return 1;
+  base = STATE_TOKEN_BASE(coap_decode_var_bytes8(wire->s, wire->length));
+  LL_FOREACH(session->lg_crcv, rcv)
+    if (coap_binary_equal(rcv->app_token, app) && base == STATE_TOKEN_BASE(rcv->state_token)) return 1;
+  LL_FOREACH(session->lg_xmit, xmit)
+    if (xmit->b.b1.app_token && coap_binary_equal(xmit->b.b1.app_token, app) &&
+        base == STATE_TOKEN_BASE(xmit->b.b1.state_token)) return 1;
+  return 0;
+}
+
+int
+coap_session_forget_runtime_token(coap_session_t *session, const uint8_t *token, size_t length) {
+  coap_bin_const_t app = {length, token};
+  coap_queue_t **link, *q;
+  coap_lg_crcv_t *rcv, *rtmp;
+  coap_lg_xmit_t *xmit, *xtmp;
+  if (!session->context->runtime_read || length > 8) return 0;
+  coap_lock_lock(session->context, return 0);
+  if (session->partial_write && session->delayqueue && runtime_token_matches(session, &session->delayqueue->pdu->actual_token, &app)) { coap_lock_unlock(session->context); return 0; }
+  link = &session->context->sendqueue;
+  while ((q = *link)) {
+    if (q->session == session && runtime_token_matches(session, &q->pdu->actual_token, &app)) {
+      *link = q->next;
+      if (q->next) q->next->t += q->t;
+      if (q->pdu->type == COAP_MESSAGE_CON && session->con_active) session->con_active--;
+      q->next = NULL;
+      coap_delete_node_lkd(q);
+    } else link = &q->next;
+  }
+  link = &session->delayqueue;
+  while ((q = *link)) {
+    if (runtime_token_matches(session, &q->pdu->actual_token, &app)) {
+      *link = q->next; q->next = NULL; coap_delete_node_lkd(q);
+    } else link = &q->next;
+  }
+#if COAP_OSCORE_SUPPORT
+  oscore_association_t *association, *atmp;
+  HASH_ITER(hh, session->associations, association, atmp) {
+    if (runtime_token_matches(session, association->token, &app))
+      oscore_delete_association(session, association);
+  }
+#endif
+  LL_FOREACH_SAFE(session->lg_xmit, xmit, xtmp) {
+    if (xmit->b.b1.app_token && coap_binary_equal(xmit->b.b1.app_token, &app)) {
+      LL_DELETE(session->lg_xmit, xmit); coap_block_delete_lg_xmit(session, xmit);
+    }
+  }
+  LL_FOREACH_SAFE(session->lg_crcv, rcv, rtmp) {
+    if (coap_binary_equal(rcv->app_token, &app)) {
+      LL_DELETE(session->lg_crcv, rcv); coap_block_delete_lg_crcv(session, rcv);
+    }
+  }
+  coap_lock_unlock(session->context);
+  return 1;
+}
+void coap_session_set_runtime_peer(coap_session_t *session, const coap_address_t *peer) {
+  if (session->context->runtime_read) session->addr_info.remote = *peer;
+}
+#endif
