@@ -1683,8 +1683,21 @@ coap_io_process_with_fds_lkd(coap_context_t *ctx, uint32_t timeout_ms,
   /* Unlock so that other threads can lock/update ctx */
   coap_lock_unlock(ctx);
 
-  result = select((int)nfds, &ctx->readfds, &ctx->writefds, &ctx->exceptfds,
-                  timeout > 0 ? &tv : NULL);
+#ifdef _WIN32
+  /* Runtime transports deliberately supply no native socket descriptors.
+   * Winsock rejects empty fd_sets, whereas POSIX select permits a timed wait.
+   * Preserve the bounded callback polling interval without inventing a socket. */
+  if (ctx->runtime_read && ctx->readfds.fd_count == 0 &&
+      ctx->writefds.fd_count == 0 && ctx->exceptfds.fd_count == 0) {
+    if (timeout_ms != COAP_IO_NO_WAIT)
+      Sleep(timeout > 0 ? timeout : INFINITE);
+    result = 0;
+  } else
+#endif
+  {
+    result = select((int)nfds, &ctx->readfds, &ctx->writefds, &ctx->exceptfds,
+                    timeout > 0 ? &tv : NULL);
+  }
 
   coap_lock_lock(ctx, return -1);
 

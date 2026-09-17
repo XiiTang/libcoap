@@ -40,3 +40,12 @@ discovery, two-responder multicast Block2, PSK, complete certificate chains,
 hostname/trust/mTLS failures, OSCORE reopen, forged tags/IVs and replayed responses.
 No server, business workflow, reconnect, execution persistence or alternative
 CoAP engine is added to the embedding application.
+
+## Windows supplied-I/O polling (2026-09-18)
+
+Winsock `select` rejects three empty descriptor sets with WSAEINVAL. Controlled
+transports intentionally own no native sockets, so their empty-set Windows path
+uses a bounded wait (or returns immediately for COAP_IO_NO_WAIT) before processing
+the supplied I/O callbacks. External descriptors still use select. No alternate
+socket, DNS, crypto or protocol engine is introduced. The safe wrapper regression
+polls both UDP and TCP controlled clients without native descriptors.
