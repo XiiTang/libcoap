@@ -838,6 +838,7 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
   coap_bin_const_t nonce;
   int pltxt_size = 0;
   int got_resp_piv = 0;
+  coap_bin_const_t response_partial_iv = { 0, NULL };
   int doing_resp_observe = 0;
   uint8_t coap_request = COAP_PDU_IS_REQUEST(pdu);
   coap_bin_const_t pdu_token;
@@ -1086,6 +1087,7 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
       goto error;
     }
     got_resp_piv = cose->partial_iv.length ? 1 : 0;
+    response_partial_iv = cose->partial_iv;
 
     association = oscore_find_association(session, &pdu_token);
     if (association) {
@@ -1575,14 +1577,14 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
       break;
     case COAP_OPTION_OBSERVE:
       if (!coap_request) {
-        bias = cose->partial_iv.length > 3 ? cose->partial_iv.length - 3 : 0;
-        len = cose->partial_iv.length > 3 ? 3 : cose->partial_iv.length;
+        bias = response_partial_iv.length > 3 ? response_partial_iv.length - 3 : 0;
+        len = response_partial_iv.length > 3 ? 3 : response_partial_iv.length;
         /* Make Observe option reflect last 3 bytes of partial_iv */
         if (!coap_add_option_internal(
                 decrypt_pdu,
                 opt_iter.number,
                 len,
-                cose->partial_iv.s ? &cose->partial_iv.s[bias] : NULL)) {
+                response_partial_iv.s ? &response_partial_iv.s[bias] : NULL)) {
           coap_handle_event_lkd(session->context,
                                 COAP_EVENT_OSCORE_INTERNAL_ERROR,
                                 session);
