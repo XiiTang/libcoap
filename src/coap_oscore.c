@@ -839,6 +839,7 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
   int pltxt_size = 0;
   int got_resp_piv = 0;
   coap_bin_const_t response_partial_iv = { 0, NULL };
+  uint8_t response_partial_iv_data[sizeof(cose->partial_iv_data)];
   int doing_resp_observe = 0;
   uint8_t coap_request = COAP_PDU_IS_REQUEST(pdu);
   coap_bin_const_t pdu_token;
@@ -1088,6 +1089,11 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
     }
     got_resp_piv = cose->partial_iv.length ? 1 : 0;
     response_partial_iv = cose->partial_iv;
+    if (response_partial_iv.length) {
+      memcpy(response_partial_iv_data, response_partial_iv.s,
+             response_partial_iv.length);
+      response_partial_iv.s = response_partial_iv_data;
+    }
 
     association = oscore_find_association(session, &pdu_token);
     if (association) {
