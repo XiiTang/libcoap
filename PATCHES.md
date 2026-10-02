@@ -1,51 +1,9 @@
-# Controlled Runtime client
+# Boundless libcoap native patches
 
-Base: libcoap v4.3.5b (`851533c3cf63d16984d370ce39d586ecb3694971`).
-Existing BSD licenses and history are retained.
-
-The embedding application supplies bounded nonblocking stream/datagram I/O.
-The native client opens no replacement socket or DNS path in controlled mode.
-Read/write, complete DER certificate-chain verification, durable sender reservation
-and authenticated replay-window persistence callbacks are exposed in `coap_net.h`.
-The caller owns one context on one thread and installs callbacks before sessions.
-It must return would-block promptly and must not re-enter native APIs from callbacks.
-
-Native changes:
-
-- Controlled I/O never passes the invalid native descriptor to poll/select.
-  Internal handshake waits poll at most 10 ms; missing reliable CSM fails closed.
-  Reliable message lengths are bounded before body allocation.
-- The application can retire an original token and its native block/Observe,
-  delayed/retransmitted and OSCORE state. A partially written reliable packet
-  cannot be forgotten independently; the owner must stop that connection.
-- BERT streaming honors absence of SINGLE_BODY. The last multi-unit BERT packet
-  marks only its last logical block final; it no longer truncates the response.
-- Multicast retains a collection template and independent native Block2 state per
-  responder. Continuations use that responder's unicast address. Native receive
-  state is capped at 256 entries; collection templates end by explicit retirement.
-  Skeletal PDU copies relocate their token pointer into their own allocation.
-- DTLS verification passes the whole presented certificate chain to the Runtime.
-  Native PKI acceptance cannot bypass a rejecting Runtime verifier.
-- OSCORE checks sender-reservation failures before using a sequence, persists
-  authenticated replay state before plaintext delivery and restores that state
-  explicitly. Failed authentication restores the exact prior replay window,
-  preserves request associations and does not acknowledge the local send queue.
-  A response without a Partial IV may authenticate only once per request, including
-  an Observe request; later notifications use the persisted sender replay window.
-- Native binary/string allocations are wiped before freeing private key material.
-
-Interoperability is exercised through IMAPipe's safe wrapper against aiocoap
-0.4.17, TinyDTLS and independent OpenSSL: UDP/TCP Block1/2, BERT, Observe,
-discovery, two-responder multicast Block2, PSK, complete certificate chains,
-hostname/trust/mTLS failures, OSCORE reopen, forged tags/IVs and replayed responses.
-No server, business workflow, reconnect, execution persistence or alternative
-CoAP engine is added to the embedding application.
-
-## Windows supplied-I/O polling (2026-09-18)
-
-Winsock `select` rejects three empty descriptor sets with WSAEINVAL. Controlled
-transports intentionally own no native sockets, so their empty-set Windows path
-uses a bounded wait (or returns immediately for COAP_IO_NO_WAIT) before processing
-the supplied I/O callbacks. External descriptors still use select. No alternate
-socket, DNS, crypto or protocol engine is introduced. The safe wrapper regression
-polls both UDP and TCP controlled clients without native descriptors.
+Retain the supplied Runtime I/O and persistence hooks on the current native
+baseline. Backport b710ccdd542c3d8d2f5b6c40d59d1938fcb208d3 to check bytes
+before decoding extended token lengths. Adapt 2e995218f356d63070afee0517f3c89dd44a944e
+so nonempty responses match MID and token; empty ACK/RST remain MID-only.
+Preserve the runtime_replay OSCORE authentication-before-removal sequence.
+Do not import newer queue, address or locking changes. Native PDU reset and
+sendqueue token regressions pass with the complete CUnit suite on macOS arm64.

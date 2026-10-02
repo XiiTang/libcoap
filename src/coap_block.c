@@ -2211,8 +2211,10 @@ coap_block_test_q_block(coap_session_t *session, coap_pdu_t *actual) {
                                           (0 << 4) | (0 << 3) | 0),
                      buf);
   k_token = coap_new_bin_const(pdu->actual_token.s, pdu->actual_token.length);
-  if (!k_token)
+  if (!k_token) {
+    coap_delete_pdu_lkd(pdu);
     return COAP_INVALID_MID;
+  }
   set_block_mode_probe_q(session->block_mode);
   mid = coap_send_internal(session, pdu);
   if (mid == COAP_INVALID_MID) {

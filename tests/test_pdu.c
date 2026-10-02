@@ -23,6 +23,20 @@ coap_pdu_t *pdu;              /* Holds the parsed PDU for most tests */
  ************************************************************************/
 
 static void
+t_parse_short_extended_token(void) {
+  uint8_t one[] = {0x4d, 0x01, 0x00, 0x01};
+  uint8_t two[] = {0x4e, 0x01, 0x00, 0x01};
+  uint8_t partial[] = {0x4e, 0x01, 0x00, 0x01, 0x00};
+  const uint8_t *packets[] = {one, two, partial};
+  size_t lengths[] = {sizeof(one), sizeof(two), sizeof(partial)};
+  for (size_t i = 0; i < 3; i++) {
+    CU_ASSERT(coap_pdu_parse(COAP_PROTO_UDP, packets[i], lengths[i], pdu) == 0);
+    CU_ASSERT(pdu->e_token_length == 0);
+    CU_ASSERT(pdu->actual_token.length == 0);
+  }
+}
+
+static void
 t_parse_pdu1(void) {
   uint8_t teststr[] = {  0x40, 0x01, 0x93, 0x34 };
   int result;
@@ -1488,6 +1502,7 @@ t_init_pdu_tests(void) {
             CU_get_error_msg());                                      \
   }
 
+  PDU_TEST(suite[0], t_parse_short_extended_token);
   PDU_TEST(suite[0], t_parse_pdu1);
   PDU_TEST(suite[0], t_parse_pdu2);
   PDU_TEST(suite[0], t_parse_pdu3);
