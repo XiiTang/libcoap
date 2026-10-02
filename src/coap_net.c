@@ -2538,7 +2538,7 @@ error:
 
 int
 coap_remove_from_queue(coap_queue_t **queue, coap_session_t *session, coap_mid_t id,
-                       coap_queue_t **node) {
+                       coap_bin_const_t *token, coap_queue_t **node) {
   coap_queue_t *p, *q;
 
   if (!queue || !*queue)
@@ -2546,7 +2546,8 @@ coap_remove_from_queue(coap_queue_t **queue, coap_session_t *session, coap_mid_t
 
   /* replace queue head if PDU's time is less than head's time */
 
-  if (session == (*queue)->session && id == (*queue)->id) { /* found message id */
+  if (session == (*queue)->session && id == (*queue)->id &&
+      (!token || coap_binary_equal(token, &(*queue)->pdu->actual_token))) { /* found message id */
     *node = *queue;
     *queue = (*queue)->next;
     if (*queue) {          /* adjust relative time of new queue head */
@@ -2563,7 +2564,8 @@ coap_remove_from_queue(coap_queue_t **queue, coap_session_t *session, coap_mid_t
   do {
     p = q;
     q = q->next;
-  } while (q && (session != q->session || id != q->id));
+  } while (q && (session != q->session || id != q->id ||
+                 (token && !coap_binary_equal(token, &q->pdu->actual_token))));
 
   if (q) {                        /* found message id */
     p->next = q->next;
@@ -3915,7 +3917,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
       coap_send_message_type_lkd(session, pdu, COAP_MESSAGE_RST);
     }
     /* find message id in sendqueue to stop retransmission */
-    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
+    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
     goto cleanup;
   }
 
@@ -3984,7 +3986,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
     if (decrypt) {
       /* find message id in sendqueue to stop retransmission and get sent */
       if (!context->runtime_replay)
-        coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
+        coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
       /* Bump ref so pdu is not freed of, and keep a pointer to it */
       orig_pdu = pdu;
       coap_pdu_reference_lkd(orig_pdu);
@@ -3998,7 +4000,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
         return;
       } else {
         if (context->runtime_replay)
-          coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
+          coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
         session->oscore_encryption = 1;
         pdu = dec_pdu;
       }
@@ -4012,7 +4014,8 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
   case COAP_MESSAGE_ACK:
     if (NULL == sent) {
       /* find message id in sendqueue to stop retransmission */
-      coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
+      coap_remove_from_queue(&context->sendqueue, session, pdu->mid,
+                             pdu->code == 0 ? NULL : &pdu->actual_token, &sent);
     }
 
     if (sent && session->con_active) {
@@ -4156,7 +4159,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
     }
 
     /* find message id in sendqueue to stop retransmission */
-    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
+    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, NULL, &sent);
 
     if (sent) {
       coap_cancel(context, sent);
@@ -4206,7 +4209,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
 
   case COAP_MESSAGE_NON:
     /* find transaction in sendqueue in case large response */
-    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &sent);
+    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
     /* check for unknown critical options */
     if (coap_option_check_critical(session, pdu, &opt_filter) == 0) {
       packet_is_bad = 1;

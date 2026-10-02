@@ -699,7 +699,7 @@ coap_session_delay_pdu(coap_session_t *session, coap_pdu_t *pdu,
                        coap_queue_t *node) {
   if (node) {
     coap_queue_t *removed = NULL;
-    coap_remove_from_queue(&session->context->sendqueue, session, node->id, &removed);
+    coap_remove_from_queue(&session->context->sendqueue, session, node->id, NULL, &removed);
     assert(removed == node);
     coap_session_release_lkd(node->session);
     node->session = NULL;
