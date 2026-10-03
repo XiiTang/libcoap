@@ -897,6 +897,8 @@ coap_nack_name(coap_nack_reason_t reason) {
     return "COAP_NACK_WS_LAYER_FAILED";
   case COAP_NACK_WS_FAILED:
     return "COAP_NACK_WS_FAILED";
+  case COAP_NACK_BODY_INCOMPLETE:
+    return "COAP_NACK_BODY_INCOMPLETE";
   default:
     return "???";
   }

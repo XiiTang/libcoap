@@ -3724,6 +3724,49 @@ coap_block_build_body_lkd(coap_binary_t *body_data, size_t length,
  * Return: 0 Call application handler
  *         1 Do not call application handler - just sent the next request
  */
+/*
+ * The application receives each block as it arrives, so it already holds the
+ * earlier blocks of a body libcoap cannot complete.
+ */
+static int
+coap_body_streamed(const coap_session_t *session, const coap_block_b_t *block) {
+  return !((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) ||
+           (block->bert && !session->context->runtime_read));
+}
+
+/*
+ * Ends a streamed body libcoap cannot complete. Its request learns so at once,
+ * by its own token, and nothing is requested again on its behalf; an
+ * observation continues with its next notification. Returns 1: the received
+ * block is acknowledged and not passed to the application.
+ */
+static int
+coap_abandon_streamed_body(coap_session_t *session, coap_lg_crcv_t *lg_crcv,
+                           coap_pdu_t *rcvd) {
+  coap_context_t *context = session->context;
+
+  if (context->nack_handler) {
+    coap_update_token(&lg_crcv->pdu, lg_crcv->app_token->length, lg_crcv->app_token->s);
+    coap_lock_callback(context,
+                       context->nack_handler(session, &lg_crcv->pdu,
+                                             COAP_NACK_BODY_INCOMPLETE,
+                                             lg_crcv->pdu.mid));
+  }
+  coap_send_ack_lkd(session, rcvd);
+  if (lg_crcv->observe_set) {
+    lg_crcv->initial = 1;
+    if (lg_crcv->body_data) {
+      coap_free_type(COAP_STRING, lg_crcv->body_data);
+      lg_crcv->body_data = NULL;
+    }
+    coap_ticks(&lg_crcv->last_used);
+    return 1;
+  }
+  LL_DELETE(session->lg_crcv, lg_crcv);
+  coap_block_delete_lg_crcv(session, lg_crcv);
+  return 1;
+}
+
 int
 coap_handle_response_get_block(coap_context_t *context,
                                coap_session_t *session,
@@ -3889,6 +3932,10 @@ reinit:
             if (block_opt == COAP_OPTION_Q_BLOCK2)
               goto reinit;
 #endif /* COAP_Q_BLOCK_SUPPORT */
+            /* Restarting would send the request again unasked and splice a
+               new representation onto blocks already delivered. */
+            if (coap_body_streamed(session, &block))
+              return coap_abandon_streamed_body(session, lg_crcv, rcvd);
 
             coap_log_warn("Data body updated during receipt - new request started\n");
             if (!(session->block_mode & COAP_BLOCK_SINGLE_BODY))
@@ -3918,11 +3965,15 @@ reinit:
         } else if (lg_crcv->etag_set) {
           /* Cannot handle this change in ETag to not being there */
           coap_log_warn("Not all blocks have ETag option\n");
+          if (coap_body_streamed(session, &block))
+            return coap_abandon_streamed_body(session, lg_crcv, rcvd);
           goto fail_resp;
         }
 
         if (fmt != lg_crcv->content_format) {
           coap_log_warn("Content-Format option mismatch\n");
+          if (coap_body_streamed(session, &block))
+            return coap_abandon_streamed_body(session, lg_crcv, rcvd);
           goto fail_resp;
         }
 #if COAP_Q_BLOCK_SUPPORT
@@ -3963,6 +4014,8 @@ reinit:
             /* Update list of blocks received */
             if (!update_received_blocks(&lg_crcv->rec_blocks, block.num,
                                         block.m || (block.bert && offset + chunk < saved_offset + length))) {
+              if (coap_body_streamed(session, &block))
+                return coap_abandon_streamed_body(session, lg_crcv, rcvd);
               coap_handle_event_lkd(context, COAP_EVENT_PARTIAL_BLOCK, session);
               goto fail_resp;
             }
@@ -4028,8 +4081,11 @@ reinit:
               token = STATE_TOKEN_FULL(lg_crcv->state_token, ++lg_crcv->retry_counter);
               len = coap_encode_var_safe8(buf, sizeof(token), token);
               pdu = coap_pdu_duplicate_lkd(&lg_crcv->pdu, session, len, buf, NULL);
-              if (!pdu)
+              if (!pdu) {
+                if (coap_body_streamed(session, &block))
+                  return coap_abandon_streamed_body(session, lg_crcv, rcvd);
                 goto fail_resp;
+              }
 
               if (rcvd->type == COAP_MESSAGE_NON)
                 pdu->type = COAP_MESSAGE_NON; /* Server is using NON */
@@ -4047,8 +4103,11 @@ reinit:
                 (void)coap_get_data(&lg_crcv->pdu, &length, &data);
                 coap_add_data_large_internal(session, NULL, pdu, NULL, NULL, -1, 0, length, data, NULL, NULL, 0, 0);
               }
-              if (coap_send_internal(session, pdu) == COAP_INVALID_MID)
+              if (coap_send_internal(session, pdu) == COAP_INVALID_MID) {
+                if (coap_body_streamed(session, &block))
+                  return coap_abandon_streamed_body(session, lg_crcv, rcvd);
                 goto fail_resp;
+              }
             }
             if ((session->block_mode & COAP_SINGLE_BLOCK_OR_Q) || (block.bert && !context->runtime_read))
               goto skip_app_handler;
