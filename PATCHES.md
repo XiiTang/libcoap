@@ -20,7 +20,14 @@ continuation request that cannot be built or sent) instead report
 `COAP_NACK_BODY_INCOMPLETE` to the nack handler with the request's own token,
 acknowledge the block without passing it on, and request nothing more. A
 non-observing exchange is released; an observation keeps its state for its
-next notification. Single-body mode keeps upstream behavior. Regression:
-libcoap-rs `a_streamed_body_that_cannot_complete_fails_its_own_request_without_another`
-fails without this patch (the restart is sent) and passes with it on macOS
-arm64; the block receive path has no CUnit case.
+next notification. Single-body mode keeps upstream behavior. Regressions in
+libcoap-rs drive the native client through supplied I/O:
+`a_streamed_body_that_cannot_complete_fails_its_own_request_without_another`
+(ETag change, Content-Format change, missing ETag; without this patch the restart
+is sent) and `a_body_whose_blocks_outrun_tracking_fails_its_own_request_without_another`
+(block tracking overflow; without it the block is delivered and nothing reported).
+Both fail without the patch and pass with it on macOS arm64. A continuation
+request that cannot be built fails only on allocation; one that cannot be sent
+through supplied I/O stops the whole client first, so neither has a case of its
+own. The complete CUnit suite (177 tests, 1387 assertions; it has no block
+receive case) passes with OpenSSL DTLS, TCP and OSCORE on macOS arm64.
