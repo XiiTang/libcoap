@@ -1028,6 +1028,69 @@ fail:
   coap_free(session);
 }
 
+
+/* Presence is part of RFC 8613's KDF info and compressed COSE option. */
+static void
+t_oscore_context_presence(void) {
+  static const char absent[] =
+      "master_secret,hex,\"0102030405060708090a0b0c0d0e0f10\"\n"
+      "master_salt,hex,\"9e7ca92223786340\"\n"
+      "sender_id,hex,\"\"\nrecipient_id,hex,\"01\"\n"
+      "rfc8613_b_2,bool,false\n";
+  static const char empty[] =
+      "master_secret,hex,\"0102030405060708090a0b0c0d0e0f10\"\n"
+      "master_salt,hex,\"9e7ca92223786340\"\n"
+      "sender_id,hex,\"\"\nrecipient_id,hex,\"01\"\n"
+      "id_context,hex,\"\"\nrfc8613_b_2,bool,false\n";
+  /* HKDF-SHA-256 with CBOR info 85 40 40 0a 63 4b6579 10. */
+  static const uint8_t empty_key[] = { 0x25, 0xdf, 0xd5, 0xe5, 0x67, 0xe7, 0x14, 0x96, 0x04, 0x11, 0xef, 0xf2, 0x6a, 0x7d, 0xba, 0x80 };
+  const coap_bin_const_t recipient = { 1, (const uint8_t *)"\x01" };
+  coap_bin_const_t empty_id = { 0, (const uint8_t *)"" };
+  const coap_bin_const_t omitted = { 0, NULL };
+  coap_str_const_t conf = { sizeof(absent)-1, (const uint8_t *)absent };
+  coap_oscore_conf_t *parsed;
+  oscore_ctx_t *no_context, *empty_context;
+  oscore_recipient_ctx_t *found;
+  cose_encrypt0_t encoded[1], decoded[1];
+  uint8_t option[32];
+  size_t length;
+
+  parsed = coap_new_oscore_conf(conf, NULL, NULL, 0);
+  FailIf_CU_ASSERT_PTR_NOT_NULL(parsed);
+  CU_ASSERT(coap_context_oscore_server(ctx, parsed));
+  no_context = ctx->p_osc_ctx;
+  FailIf_CU_ASSERT_PTR_NOT_NULL(no_context);
+  CU_ASSERT_PTR_NULL(no_context->id_context);
+  CU_ASSERT_PTR_NULL(oscore_find_context(ctx, recipient, &empty_id, NULL, &found));
+  CU_ASSERT(oscore_find_context(ctx, recipient, &omitted, NULL, &found) == no_context);
+
+  conf.s = (const uint8_t *)empty;
+  conf.length = sizeof(empty)-1;
+  parsed = coap_new_oscore_conf(conf, NULL, NULL, 0);
+  FailIf_CU_ASSERT_PTR_NOT_NULL(parsed);
+  CU_ASSERT(coap_context_oscore_server(ctx, parsed));
+  empty_context = no_context->next;
+  FailIf_CU_ASSERT_PTR_NOT_NULL(empty_context);
+  FailIf_CU_ASSERT_PTR_NOT_NULL(empty_context->id_context);
+  CU_ASSERT(empty_context->id_context->length == 0);
+  CU_ASSERT(CHECK_SAME(empty_key, empty_context->sender_context->sender_key));
+  CU_ASSERT(oscore_find_context(ctx, recipient, &empty_id, NULL, &found) == empty_context);
+
+  cose_encrypt0_init(encoded);
+  cose_encrypt0_set_kid_context(encoded, &empty_id);
+  length = oscore_encode_option_value(option, sizeof(option), encoded, 0, 0);
+  CU_ASSERT(length == 2);
+  CU_ASSERT(option[0] == 0x10 && option[1] == 0);
+  cose_encrypt0_init(decoded);
+  CU_ASSERT(oscore_decode_option_value(option, length, decoded));
+  CU_ASSERT_PTR_NOT_NULL(decoded->kid_context.s);
+  CU_ASSERT(decoded->kid_context.length == 0);
+  cose_encrypt0_set_kid_context(encoded, NULL);
+  CU_ASSERT(oscore_encode_option_value(option, sizeof(option), encoded, 0, 0) == 0);
+fail:
+  oscore_free_contexts(ctx);
+}
+
 /************************************************************************
  ** initialization
  ************************************************************************/
@@ -1065,6 +1128,7 @@ t_init_oscore_tests(void) {
   }
 
   if (coap_oscore_is_supported()) {
+    OSCORE_TEST(t_oscore_context_presence);
     OSCORE_TEST(t_oscore_c_1_1);
     OSCORE_TEST(t_oscore_c_1_2);
     OSCORE_TEST(t_oscore_c_2_1);

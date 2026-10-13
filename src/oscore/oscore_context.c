@@ -66,7 +66,7 @@ compose_info(uint8_t *buffer,
                                &rem_size,
                                id ? id->s : NULL,
                                id ? id->length : 0);
-  if (id_context != NULL && id_context->length > 0) {
+  if (id_context != NULL) {
     ret += oscore_cbor_put_bytes(&buffer,
                                  &rem_size,
                                  id_context->s,
@@ -206,16 +206,18 @@ oscore_find_context(const coap_context_t *c_context,
           } else {
             ok += 1;
           }
-        } else if (ctxkey_id) {
+        } else if (ctxkey_id && ctxkey_id->s != NULL) {
           if (pt->id_context != NULL) {
             if (ctxkey_id->length != pt->id_context->length)
               ok += 1;
-            else
+            else if (ctxkey_id->length != 0)
               ok = ok + (memcmp(pt->id_context->s,
                                 ctxkey_id->s,
                                 ctxkey_id->length) != 0);
-          } else if (ctxkey_id->length > 0)
+          } else {
+            /* A present empty bstr is not an absent ID Context. */
             ok += 1;
+          }
         }
         if (ok == 0) {
           /* optional id context and recipient id are the same  */

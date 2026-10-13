@@ -31,3 +31,19 @@ request that cannot be built fails only on allocation; one that cannot be sent
 through supplied I/O stops the whole client first, so neither has a case of its
 own. The complete CUnit suite (177 tests, 1387 assertions; it has no block
 receive case) passes with OpenSSL DTLS, TCP and OSCORE on macOS arm64.
+
+## OSCORE ID Context presence
+
+RFC 8613 distinguishes an absent ID Context (CBOR nil in KDF info) from a
+present empty byte string. Preserve that distinction in `compose_info`, the
+compressed option encoder, and `oscore_find_context`: an explicitly empty KID
+Context matches only a configured empty context. An omitted wire KID Context
+remains optional for context lookup, including when a context is provisioned.
+The existing quoted hex configuration accepts empty sender, recipient and
+context IDs; callers must quote empty values.
+
+`t_oscore_context_presence` exercises configuration, an independently calculated
+HKDF-SHA-256 key, context selection and option roundtrip. On macOS arm64 with
+OpenSSL, its six failing assertions on the previous pin all pass with this patch;
+the complete CUnit suite passes (178 tests, 1406 assertions), including unchanged
+RFC 8613 Appendix C vectors.

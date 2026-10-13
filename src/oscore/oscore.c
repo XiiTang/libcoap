@@ -192,7 +192,7 @@ oscore_encode_option_value(uint8_t *option_buffer,
     rem_space -= cose->partial_iv.length;
   }
 
-  if (cose->kid_context.length > 0 && cose->kid_context.s != NULL) {
+  if (cose->kid_context.s != NULL) {
     if (appendix_b_2) {
       /* Need to CBOR wrap kid_context - yuk! */
       uint8_t *ptr = &option_buffer[offset+1];
