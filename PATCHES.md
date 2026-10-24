@@ -47,3 +47,13 @@ HKDF-SHA-256 key, context selection and option roundtrip. On macOS arm64 with
 OpenSSL, its six failing assertions on the previous pin all pass with this patch;
 the complete CUnit suite passes (178 tests, 1406 assertions), including unchanged
 RFC 8613 Appendix C vectors.
+
+## Supplied-I/O TCP receive maximum (W11d)
+
+A supplied-I/O client checks incoming reliable PDU lengths against its runtime
+maximum. Applying the compile-time default as well rejected messages above
+8 MiB + 256 bytes even when the embedding application allowed them. Clients
+without supplied I/O retain the compile-time guard. The libcoap-rs regression
+`supplied_tcp_pdu_uses_the_runtime_receive_maximum` supplies an independently
+encoded TCP response above that default within the runtime maximum, and an
+oversized response that must be refused before delivery.

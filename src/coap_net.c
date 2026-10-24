@@ -2197,11 +2197,11 @@ coap_read_session(coap_context_t *ctx, coap_session_t *session, coap_tick_t now)
             /* Header now all in */
             size_t size = coap_pdu_parse_size(session->proto, session->read_header,
                                               hdr_size + tok_ext_bytes);
-            if (size > COAP_DEFAULT_MAX_PDU_RX_SIZE ||
-                (ctx->runtime_read && size > ctx->runtime_maximum_pdu)) {
-              coap_log_warn("** %s: incoming PDU length too large (%zu > %lu)\n",
-                            coap_session_str(session),
-                            size, COAP_DEFAULT_MAX_PDU_RX_SIZE);
+            size_t maximum = ctx->runtime_read ? ctx->runtime_maximum_pdu :
+                             COAP_DEFAULT_MAX_PDU_RX_SIZE;
+            if (size > maximum) {
+              coap_log_warn("** %s: incoming PDU length too large (%zu > %zu)\n",
+                            coap_session_str(session), size, maximum);
               bytes_read = -1;
               break;
             }
