@@ -29,6 +29,9 @@ coap_context_set_runtime_io(coap_context_t *ctx, void *data,
   ctx->runtime_maximum_pdu = maximum_pdu;
   return 1;
 }
+void coap_context_set_runtime_received(coap_context_t *ctx, coap_runtime_received_t received) {
+  ctx->runtime_received = received;
+}
 void coap_context_set_runtime_verify(coap_context_t *ctx, coap_runtime_verify_t verify) {
   ctx->runtime_verify = verify;
 }

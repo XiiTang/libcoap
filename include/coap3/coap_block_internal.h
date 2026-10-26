@@ -541,9 +541,12 @@ int coap_add_data_large_request_lkd(coap_session_t *session,
  * @param session The session.
  * @param pdu     The PDU to to check for updating.
  */
+const coap_bin_const_t *coap_block_app_token(const coap_session_t *session,
+                                            const coap_pdu_t *pdu);
 void coap_check_update_token(coap_session_t *session, coap_pdu_t *pdu);
 #else /* ! COAP_CLIENT_SUPPORT */
 #define coap_check_update_token(a,b)
+#define coap_block_app_token(session, pdu) ((const coap_bin_const_t *)NULL)
 #endif /* ! COAP_CLIENT_SUPPORT */
 
 /** @} */

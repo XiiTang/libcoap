@@ -262,6 +262,79 @@ t_sendqueue9(void) {
   CU_ASSERT_PTR_NULL(ctx->sendqueue->next);
 }
 
+static void
+t_runtime_rst_classify(void) {
+  coap_pdu_t *rst = coap_pdu_init(COAP_MESSAGE_RST, 0, 1, 0);
+  coap_runtime_rst_t found;
+  coap_mid_t last_ping_mid = session->last_ping_mid;
+  coap_mid_t remote_test_mid = session->remote_test_mid;
+  coap_tick_t last_ping = session->last_ping;
+  uint32_t block_mode = session->block_mode;
+  unsigned int ping_timeout = ctx->ping_timeout;
+  int max_token_checked = session->max_token_checked;
+
+  ReturnIf_CU_ASSERT_PTR_NOT_NULL(rst);
+  CU_ASSERT_PTR_NULL(ctx->sendqueue);
+  ctx->sendqueue = node[1];
+  session->last_ping_mid = 10;
+  session->last_ping = 1;
+  ctx->ping_timeout = 1;
+  session->remote_test_mid = 11;
+  session->max_token_checked = COAP_EXT_T_CHECKING;
+#if COAP_Q_BLOCK_SUPPORT
+  session->block_mode |= COAP_BLOCK_PROBE_Q_BLOCK;
+#endif /* COAP_Q_BLOCK_SUPPORT */
+
+  rst->mid = 10;
+  coap_runtime_classify_rst(session, rst, &found);
+  CU_ASSERT(found.ping);
+  CU_ASSERT(found.target == COAP_RUNTIME_TARGET_PING);
+  CU_ASSERT_PTR_NULL(found.app_token);
+
+  rst->mid = 11;
+  coap_runtime_classify_rst(session, rst, &found);
+  CU_ASSERT(found.extended_token);
+  CU_ASSERT(found.target == COAP_RUNTIME_TARGET_EXTENDED_TOKEN);
+  CU_ASSERT(session->max_token_checked == COAP_EXT_T_CHECKING);
+#if COAP_Q_BLOCK_SUPPORT
+  CU_ASSERT(found.q_block);
+  session->max_token_checked = COAP_EXT_T_CHECKED;
+  coap_runtime_classify_rst(session, rst, &found);
+  CU_ASSERT(found.q_block);
+  CU_ASSERT(found.target == COAP_RUNTIME_TARGET_Q_BLOCK);
+  CU_ASSERT(session->block_mode & COAP_BLOCK_PROBE_Q_BLOCK);
+#endif /* COAP_Q_BLOCK_SUPPORT */
+
+  rst->mid = 1;
+  coap_runtime_classify_rst(session, rst, &found);
+  CU_ASSERT(!found.ping && !found.q_block && !found.extended_token);
+  CU_ASSERT(found.target == COAP_RUNTIME_TARGET_APPLICATION);
+  CU_ASSERT_PTR_EQUAL(found.app_token, &node[1]->pdu->actual_token);
+  CU_ASSERT(coap_binary_equal(found.app_token, &node[1]->pdu->actual_token));
+
+  rst->mid = 99;
+  coap_runtime_classify_rst(session, rst, &found);
+  CU_ASSERT(found.target == COAP_RUNTIME_TARGET_UNMATCHED);
+  CU_ASSERT_PTR_NULL(found.app_token);
+  CU_ASSERT_PTR_EQUAL(ctx->sendqueue, node[1]);
+  CU_ASSERT_PTR_NULL(node[1]->next);
+  CU_ASSERT(session->last_ping_mid == 10);
+  CU_ASSERT(session->last_ping == 1);
+  CU_ASSERT(ctx->ping_timeout == 1);
+  CU_ASSERT(session->remote_test_mid == 11);
+  CU_ASSERT_PTR_NULL(session->lg_crcv);
+  CU_ASSERT_PTR_NULL(session->lg_xmit);
+
+  ctx->sendqueue = NULL;
+  session->last_ping_mid = last_ping_mid;
+  session->remote_test_mid = remote_test_mid;
+  session->last_ping = last_ping;
+  session->block_mode = block_mode;
+  ctx->ping_timeout = ping_timeout;
+  session->max_token_checked = max_token_checked;
+  coap_delete_pdu(rst);
+}
+
 static int t_sendqueue_tests_remove(void);
 
 static void
@@ -369,6 +442,7 @@ t_init_sendqueue_tests(void) {
   SENDQUEUE_TEST(suite, t_sendqueue8);
   SENDQUEUE_TEST(suite, t_sendqueue9);
   SENDQUEUE_TEST(suite, t_sendqueue10);
+  SENDQUEUE_TEST(suite, t_runtime_rst_classify);
 
   return suite;
 }

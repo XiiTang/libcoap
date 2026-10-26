@@ -4371,39 +4371,38 @@ coap_check_code_lg_xmit(const coap_session_t *session,
 #endif /* COAP_SERVER_SUPPORT */
 
 #if COAP_CLIENT_SUPPORT
-void
-coap_check_update_token(coap_session_t *session, coap_pdu_t *pdu) {
+const coap_bin_const_t *
+coap_block_app_token(const coap_session_t *session, const coap_pdu_t *pdu) {
   uint64_t token_match =
       STATE_TOKEN_BASE(coap_decode_var_bytes8(pdu->actual_token.s,
                                               pdu->actual_token.length));
   coap_lg_xmit_t *lg_xmit;
   coap_lg_crcv_t *lg_crcv;
 
-  if (session->lg_crcv) {
-    LL_FOREACH(session->lg_crcv, lg_crcv) {
-      if (coap_binary_equal(&pdu->actual_token, lg_crcv->app_token))
-        return;
-      if (token_match == STATE_TOKEN_BASE(lg_crcv->state_token)) {
-        coap_update_token(pdu, lg_crcv->app_token->length,
-                          lg_crcv->app_token->s);
-        coap_log_debug("Client app version of updated PDU\n");
-        coap_show_pdu(COAP_LOG_DEBUG, pdu);
-        return;
-      }
-    }
+  LL_FOREACH(session->lg_crcv, lg_crcv) {
+    if (coap_binary_equal(&pdu->actual_token, lg_crcv->app_token))
+      return NULL;
+    if (token_match == STATE_TOKEN_BASE(lg_crcv->state_token))
+      return (const coap_bin_const_t *)lg_crcv->app_token;
   }
-  if (COAP_PDU_IS_REQUEST(pdu) && session->lg_xmit) {
+  if (COAP_PDU_IS_REQUEST(pdu)) {
     LL_FOREACH(session->lg_xmit, lg_xmit) {
       if (coap_binary_equal(&pdu->actual_token, lg_xmit->b.b1.app_token))
-        return;
-      if (token_match == STATE_TOKEN_BASE(lg_xmit->b.b1.state_token)) {
-        coap_update_token(pdu, lg_xmit->b.b1.app_token->length,
-                          lg_xmit->b.b1.app_token->s);
-        coap_log_debug("Client app version of updated PDU\n");
-        coap_show_pdu(COAP_LOG_DEBUG, pdu);
-        return;
-      }
+        return NULL;
+      if (token_match == STATE_TOKEN_BASE(lg_xmit->b.b1.state_token))
+        return (const coap_bin_const_t *)lg_xmit->b.b1.app_token;
     }
+  }
+  return NULL;
+}
+
+void
+coap_check_update_token(coap_session_t *session, coap_pdu_t *pdu) {
+  const coap_bin_const_t *app = coap_block_app_token(session, pdu);
+  if (app) {
+    coap_update_token(pdu, app->length, app->s);
+    coap_log_debug("Client app version of updated PDU\n");
+    coap_show_pdu(COAP_LOG_DEBUG, pdu);
   }
 }
 #endif /* ! COAP_CLIENT_SUPPORT */

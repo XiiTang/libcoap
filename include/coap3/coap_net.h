@@ -51,6 +51,17 @@
 typedef ssize_t (*coap_runtime_read_t)(void *, uint8_t *, size_t, coap_address_t *);
 typedef ssize_t (*coap_runtime_write_t)(void *, const uint8_t *, size_t, const coap_address_t *);
 typedef int (*coap_runtime_verify_t)(void *, const uint8_t *const *, const size_t *, size_t);
+typedef enum coap_runtime_target_t {
+  COAP_RUNTIME_TARGET_UNMATCHED = 0,
+  COAP_RUNTIME_TARGET_APPLICATION,
+  COAP_RUNTIME_TARGET_PING,
+  COAP_RUNTIME_TARGET_Q_BLOCK,
+  COAP_RUNTIME_TARGET_EXTENDED_TOKEN
+} coap_runtime_target_t;
+/* Received PDU and resolved local target, valid only during the callback. */
+typedef void (*coap_runtime_received_t)(coap_session_t *, const coap_pdu_t *,
+                                      coap_runtime_target_t, const coap_bin_const_t *);
+void coap_context_set_runtime_received(coap_context_t *, coap_runtime_received_t);
 typedef int (*coap_runtime_replay_t)(void *, const uint8_t *, size_t, uint64_t, uint64_t, uint8_t);
 int coap_session_forget_runtime_token(coap_session_t *, const uint8_t *, size_t);
 void coap_session_set_runtime_peer(coap_session_t *, const coap_address_t *);

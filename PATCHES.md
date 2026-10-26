@@ -57,3 +57,22 @@ without supplied I/O retain the compile-time guard. The libcoap-rs regression
 `supplied_tcp_pdu_uses_the_runtime_receive_maximum` supplies an independently
 encoded TCP response above that default within the runtime maximum, and an
 oversized response that must be refused before delivery.
+
+## Received Reset target (W5-D7)
+
+Expose an actual received datagram Reset before probe flags, the sendqueue or
+blockwise state can change. The read-only classifier shares the queue match
+with removal and the application-token resolver with `coap_check_update_token`;
+internal ping, Q-Block and extended-token probes never name an application
+request. A client-disabled build resolves a queued PDU's own token through the
+no-op `coap_block_app_token` fallback, matching its unchanged token update.
+
+`t_runtime_rst_classify` checks application, unmatched and all three probe
+targets without changing the queue or probe state. The complete CUnit suite
+passes on macOS arm64 with OpenSSL, TCP, OSCORE and Q-Block: 179 tests and 1432
+assertions. The controlled-binding regressions
+`a_reset_names_the_request_it_answers_before_its_nack`,
+`a_reset_of_a_later_block2_block_names_the_application_token`,
+`a_reset_of_a_later_block1_block_names_the_application_token` and
+`an_unknown_reset_names_no_request` exercise the callback ordering and native
+blockwise token restoration through supplied I/O.

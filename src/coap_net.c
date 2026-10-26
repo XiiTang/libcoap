@@ -2536,6 +2536,47 @@ error:
   return -1;
 }
 
+static int
+coap_queue_entry_matches(const coap_queue_t *q, const coap_session_t *session,
+                           coap_mid_t id, const coap_bin_const_t *token) {
+  return session == q->session && id == q->id &&
+         (!token || coap_binary_equal(token, &q->pdu->actual_token));
+}
+
+void
+coap_runtime_classify_rst(const coap_session_t *session, const coap_pdu_t *pdu,
+                           coap_runtime_rst_t *out) {
+  const coap_queue_t *q;
+  memset(out, 0, sizeof(*out));
+  out->ping = pdu->mid == session->last_ping_mid &&
+              session->context->ping_timeout && session->last_ping > 0;
+#if COAP_Q_BLOCK_SUPPORT
+  out->q_block = (session->block_mode & COAP_BLOCK_PROBE_Q_BLOCK) &&
+                 session->remote_test_mid == pdu->mid;
+#endif /* COAP_Q_BLOCK_SUPPORT */
+  out->extended_token = session->max_token_checked == COAP_EXT_T_CHECKING &&
+                        session->remote_test_mid == pdu->mid;
+  if (out->ping)
+    out->target = COAP_RUNTIME_TARGET_PING;
+  else if (out->extended_token)
+    out->target = COAP_RUNTIME_TARGET_EXTENDED_TOKEN;
+  else if (out->q_block)
+    out->target = COAP_RUNTIME_TARGET_Q_BLOCK;
+  else {
+    LL_FOREACH(session->context->sendqueue, q) {
+      if (coap_queue_entry_matches(q, session, pdu->mid, NULL) &&
+          q->pdu->type == COAP_MESSAGE_CON) {
+        out->target = COAP_RUNTIME_TARGET_APPLICATION;
+        out->app_token = coap_block_app_token(session, q->pdu);
+        if (!out->app_token)
+          out->app_token = &q->pdu->actual_token;
+        return;
+      }
+    }
+    out->target = COAP_RUNTIME_TARGET_UNMATCHED;
+  }
+}
+
 int
 coap_remove_from_queue(coap_queue_t **queue, coap_session_t *session, coap_mid_t id,
                        coap_bin_const_t *token, coap_queue_t **node) {
@@ -2546,8 +2587,7 @@ coap_remove_from_queue(coap_queue_t **queue, coap_session_t *session, coap_mid_t
 
   /* replace queue head if PDU's time is less than head's time */
 
-  if (session == (*queue)->session && id == (*queue)->id &&
-      (!token || coap_binary_equal(token, &(*queue)->pdu->actual_token))) { /* found message id */
+  if (coap_queue_entry_matches(*queue, session, id, token)) {
     *node = *queue;
     *queue = (*queue)->next;
     if (*queue) {          /* adjust relative time of new queue head */
@@ -2564,8 +2604,7 @@ coap_remove_from_queue(coap_queue_t **queue, coap_session_t *session, coap_mid_t
   do {
     p = q;
     q = q->next;
-  } while (q && (session != q->session || id != q->id ||
-                 (token && !coap_binary_equal(token, &q->pdu->actual_token))));
+  } while (q && !coap_queue_entry_matches(q, session, id, token));
 
   if (q) {                        /* found message id */
     p->next = q->next;
@@ -4119,33 +4158,33 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
 
     break;
 
-  case COAP_MESSAGE_RST:
+  case COAP_MESSAGE_RST: {
+    coap_runtime_rst_t rst;
+    coap_runtime_classify_rst(session, pdu, &rst);
+    if (context->runtime_received) {
+      coap_lock_callback(context,
+                         context->runtime_received(session, pdu, rst.target, rst.app_token));
+    }
     /* We have sent something the receiver disliked, so we remove
      * not only the message id but also the subscriptions we might
      * have. */
-    is_ping_rst = 0;
-    if (pdu->mid == session->last_ping_mid &&
-        context->ping_timeout && session->last_ping > 0)
-      is_ping_rst = 1;
+    is_ping_rst = rst.ping;
 
 #if COAP_Q_BLOCK_SUPPORT
     /* Check to see if checking out Q-Block support */
-    if (session->block_mode & COAP_BLOCK_PROBE_Q_BLOCK &&
-        session->remote_test_mid == pdu->mid) {
+    if (rst.q_block) {
       coap_log_debug("Q-Block support not available\n");
       set_block_mode_drop_q(session->block_mode);
     }
 #endif /* COAP_Q_BLOCK_SUPPORT */
 
     /* Check to see if checking out extended token support */
-    is_ext_token_rst = 0;
-    if (session->max_token_checked == COAP_EXT_T_CHECKING &&
-        session->remote_test_mid == pdu->mid) {
+    is_ext_token_rst = rst.extended_token;
+    if (rst.extended_token) {
       coap_log_debug("Extended Token support not available\n");
       session->max_token_size = COAP_TOKEN_DEFAULT_MAX;
       session->max_token_checked = COAP_EXT_T_CHECKED;
       session->doing_first = 0;
-      is_ext_token_rst = 1;
     }
 
     if (!is_ping_rst && !is_ext_token_rst)
@@ -4206,6 +4245,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
       }
     }
     goto cleanup;
+  }
 
   case COAP_MESSAGE_NON:
     /* find transaction in sendqueue in case large response */

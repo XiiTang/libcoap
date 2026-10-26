@@ -53,6 +53,7 @@ struct coap_context_t {
   coap_runtime_write_t runtime_write;
   coap_runtime_verify_t runtime_verify;
   coap_runtime_replay_t runtime_replay;
+  coap_runtime_received_t runtime_received;
   size_t runtime_maximum_pdu;
   coap_opt_filter_t known_options;
 #if COAP_SERVER_SUPPORT
@@ -872,6 +873,17 @@ coap_mid_t coap_send_ack_lkd(coap_session_t *session, const coap_pdu_t *request)
 coap_mid_t coap_send_rst_lkd(coap_session_t *session, const coap_pdu_t *request);
 
 /**@}*/
+
+/* Read-only classification before any Reset side effects. */
+typedef struct coap_runtime_rst_t {
+  int ping;
+  int q_block;
+  int extended_token;
+  coap_runtime_target_t target;
+  const coap_bin_const_t *app_token;
+} coap_runtime_rst_t;
+void coap_runtime_classify_rst(const coap_session_t *session, const coap_pdu_t *pdu,
+                               coap_runtime_rst_t *out);
 
 extern int coap_started;
 
