@@ -1266,12 +1266,6 @@ coap_client_delay_first(coap_session_t *session) {
           if (session->state == COAP_SESSION_STATE_CSM) {
             coap_log_debug("** %s: timeout waiting for CSM response\n",
                            coap_session_str(session));
-            if (session->context->runtime_read) {
-              coap_session_disconnected_lkd(session, COAP_NACK_NOT_DELIVERABLE);
-              session->delay_recursive = 0;
-              coap_session_release_lkd(session);
-              return 0;
-            }
             session->csm_not_seen = 1;
             coap_session_connected(session);
           } else {

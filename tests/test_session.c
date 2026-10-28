@@ -173,6 +173,56 @@ t_session6(void) {
  * will exist for all tests and are modified by coap_insert_node()
  * and coap_remove_from_queue().
  */
+#if !COAP_DISABLE_TCP
+static ssize_t
+csm_idle_read(void *data, uint8_t *buffer, size_t length, coap_address_t *peer) {
+  (void)data;
+  (void)buffer;
+  (void)length;
+  (void)peer;
+  return 0;
+}
+
+static ssize_t
+csm_accept_write(void *data, const uint8_t *buffer, size_t length,
+                 const coap_address_t *peer) {
+  (void)data;
+  (void)buffer;
+  (void)peer;
+  return (ssize_t)length;
+}
+
+static void
+t_supplied_csm_timeout_keeps_native_fallback(void) {
+  coap_context_t *context = coap_new_context(NULL);
+  coap_address_t remote;
+  coap_session_t *client;
+  coap_pdu_t *pdu;
+  const uint8_t token = 1;
+
+  ReturnIf_CU_ASSERT_PTR_NOT_NULL(context);
+  coap_context_set_runtime_io(context, NULL, csm_idle_read, csm_accept_write, 1024);
+  coap_context_set_csm_timeout_ms(context, 10);
+  coap_context_set_max_token_size(context, 16);
+  coap_address_init(&remote);
+  remote.addr.sin.sin_family = AF_INET;
+  remote.addr.sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  remote.addr.sin.sin_port = htons(COAP_DEFAULT_PORT);
+  client = coap_new_client_session(context, NULL, &remote, COAP_PROTO_TCP);
+  CU_ASSERT_PTR_NOT_NULL_FATAL(client);
+  CU_ASSERT(client->state == COAP_SESSION_STATE_CSM);
+  /* A first request with extended-token negotiation drives the actual helper. */
+  pdu = coap_pdu_init(COAP_MESSAGE_CON, COAP_REQUEST_CODE_GET, 0, 128);
+  CU_ASSERT_PTR_NOT_NULL_FATAL(pdu);
+  CU_ASSERT(coap_add_token(pdu, 1, &token));
+  CU_ASSERT(coap_send(client, pdu) != COAP_INVALID_MID);
+  CU_ASSERT(client->state == COAP_SESSION_STATE_ESTABLISHED);
+  CU_ASSERT(client->csm_not_seen == 1);
+  coap_session_release(client);
+  coap_free_context(context);
+}
+#endif
+
 static int
 t_session_tests_create(void) {
   coap_address_t addr;
@@ -224,6 +274,9 @@ t_init_session_tests(void) {
   SESSION_TEST(suite, t_session4);
   SESSION_TEST(suite, t_session5);
   SESSION_TEST(suite, t_session6);
+#if !COAP_DISABLE_TCP
+  SESSION_TEST(suite, t_supplied_csm_timeout_keeps_native_fallback);
+#endif
 
   return suite;
 }

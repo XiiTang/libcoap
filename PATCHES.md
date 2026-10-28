@@ -76,3 +76,20 @@ assertions. The controlled-binding regressions
 `a_reset_of_a_later_block1_block_names_the_application_token` and
 `an_unknown_reset_names_no_request` exercise the callback ordering and native
 blockwise token restoration through supplied I/O.
+
+
+## Restore native CSM fallback for supplied I/O (F8)
+
+Restore upstream 851533c3 `src/coap_net.c:1263-1270` verbatim at the
+coap_client_delay_first timeout checkpoint: mark csm_not_seen and connect
+with the native defaults. The supplied-I/O patch had added a disconnect /
+NOT_DELIVERABLE branch here without a recorded requirement; it is removed.
+The supplied read/write hooks and their allocation bounds remain required,
+but they do not require a different CSM timeout policy. No new timer or
+fallback mechanism is introduced.
+`t_supplied_csm_timeout_keeps_native_fallback` sends a real pre-CSM request
+through supplied I/O with extended-token negotiation, withholds the peer CSM,
+and checks the established state plus csm_not_seen after the native timeout.
+
+On macOS arm64 with OpenSSL 3, the CMake/CUnit testdriver passes all 180 tests
+(1,440 assertions), including the supplied-I/O CSM-timeout regression.
