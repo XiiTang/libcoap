@@ -93,3 +93,19 @@ and checks the established state plus csm_not_seen after the native timeout.
 
 On macOS arm64 with OpenSSL 3, the CMake/CUnit testdriver passes all 180 tests
 (1,440 assertions), including the supplied-I/O CSM-timeout regression.
+
+## Received reliable ending messages (W5-D7 remainder)
+
+Upstream libcoap `851533c3`, `src/coap_net.c::handle_signaling`, disconnects
+Release/Abort with COAP_NACK_RST without exposing the received PDU through its
+public response, NACK or event handlers. `d23c5888` is fork history, not that
+upstream basis. Extend the existing passive received hook with Session target
+before the unchanged disconnect. Existing targets retain their numeric values.
+CSM, Ping/Pong, token resolution, cancellation and close behavior are unchanged.
+
+`t_received_signaling_precedes_disconnect` supplies independently encoded TCP
+Release and Abort with no pending requests: the hook sees actual fields while
+the session is established, and the session then disconnects. The binding's
+`received_signaling_keeps_fields_and_peer_before_native_disconnect` exercises
+that decoder with pending requests and checks received-before-NACK delivery.
+Validation results are recorded after running those regressions.

@@ -3884,6 +3884,11 @@ handle_signaling(coap_context_t *context, coap_session_t *session,
     }
   } else if (pdu->code == COAP_SIGNALING_CODE_RELEASE
              || pdu->code == COAP_SIGNALING_CODE_ABORT) {
+    if (context->runtime_received) {
+      coap_lock_callback(context,
+                         context->runtime_received(session, pdu,
+                                                   COAP_RUNTIME_TARGET_SESSION, NULL));
+    }
     coap_session_disconnected_lkd(session, COAP_NACK_RST);
   }
 }

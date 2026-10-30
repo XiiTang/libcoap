@@ -56,7 +56,8 @@ typedef enum coap_runtime_target_t {
   COAP_RUNTIME_TARGET_APPLICATION,
   COAP_RUNTIME_TARGET_PING,
   COAP_RUNTIME_TARGET_Q_BLOCK,
-  COAP_RUNTIME_TARGET_EXTENDED_TOKEN
+  COAP_RUNTIME_TARGET_EXTENDED_TOKEN,
+  COAP_RUNTIME_TARGET_SESSION
 } coap_runtime_target_t;
 /* Received PDU and resolved local target, valid only during the callback. */
 typedef void (*coap_runtime_received_t)(coap_session_t *, const coap_pdu_t *,
