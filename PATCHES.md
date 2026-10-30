@@ -108,4 +108,8 @@ Release and Abort with no pending requests: the hook sees actual fields while
 the session is established, and the session then disconnects. The binding's
 `received_signaling_keeps_fields_and_peer_before_native_disconnect` exercises
 that decoder with pending requests and checks received-before-NACK delivery.
-Validation results are recorded after running those regressions.
+Validation: macOS arm64/OpenSSL 3, CMake/CUnit focused test passes both
+messages (34 assertions). Removing only this hook makes the same test fail;
+restoring it passes again. The CSM and the ending PDU are two actual ingress
+polls. The test runner uses CUnit's assertion-failure count as its exit status.
+The binding's runtime-I/O checkpoint/consumer regressions pass (21 tests).

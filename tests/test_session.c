@@ -261,6 +261,8 @@ t_received_signaling_precedes_disconnect(void) {
     client = coap_new_client_session(context, NULL, &remote, COAP_PROTO_TCP);
     CU_ASSERT_PTR_NOT_NULL_FATAL(client);
     coap_io_process(context, COAP_IO_NO_WAIT);
+    CU_ASSERT(client->state == COAP_SESSION_STATE_ESTABLISHED);
+    coap_io_process(context, COAP_IO_NO_WAIT);
     CU_ASSERT(ending_seen == 1);
     CU_ASSERT(client->state == COAP_SESSION_STATE_NONE);
     coap_session_release(client);
