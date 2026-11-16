@@ -492,6 +492,13 @@ coap_session_mfree(coap_session_t *session) {
 #if COAP_CLIENT_SUPPORT
   coap_lg_crcv_t *lg_crcv, *etmp;
 
+  /* Boundless fork: a next block request whose handler never answered. */
+  if (session->runtime_next_block) {
+    coap_delete_pdu_lkd(session->runtime_next_block);
+    session->runtime_next_block = NULL;
+    session->runtime_next_lg_crcv = NULL;
+  }
+
   /* Need to do this before (D)TLS and socket is closed down */
   LL_FOREACH_SAFE(session->lg_crcv, lg_crcv, etmp) {
     if (lg_crcv->observe_set && session->no_observe_cancel == 0) {

@@ -3801,6 +3801,29 @@ handle_response(coap_context_t *context, coap_session_t *session,
                                                              rcvd->mid),
                                    /* context is being freed off */
                                    return);
+    if (session->runtime_next_lg_crcv) {
+      /* Boundless fork: the handler has answered a streamed body's block
+         before its next block is requested. */
+      coap_lg_crcv_t *lg_crcv = session->runtime_next_lg_crcv;
+      coap_pdu_t *next = session->runtime_next_block;
+
+      session->runtime_next_lg_crcv = NULL;
+      session->runtime_next_block = NULL;
+      if (ret == COAP_RESPONSE_OK) {
+        if (coap_send_internal(session, next) == COAP_INVALID_MID) {
+          coap_runtime_abandon_streamed_body(session, lg_crcv, rcvd, 1);
+          session->last_con_handler_res = COAP_RESPONSE_OK;
+          return;
+        }
+      } else {
+        coap_delete_pdu_lkd(next);
+        if (ret == COAP_RESPONSE_ABANDON) {
+          coap_runtime_abandon_streamed_body(session, lg_crcv, rcvd, 0);
+          session->last_con_handler_res = COAP_RESPONSE_OK;
+          return;
+        }
+      }
+    }
     if (ret == COAP_RESPONSE_FAIL && rcvd->type != COAP_MESSAGE_ACK) {
       coap_send_rst_lkd(session, rcvd);
       session->last_con_handler_res = COAP_RESPONSE_FAIL;
@@ -3809,6 +3832,18 @@ handle_response(coap_context_t *context, coap_session_t *session,
       session->last_con_handler_res = COAP_RESPONSE_OK;
     }
   } else {
+    if (session->runtime_next_lg_crcv) {
+      coap_lg_crcv_t *lg_crcv = session->runtime_next_lg_crcv;
+      coap_pdu_t *next = session->runtime_next_block;
+
+      session->runtime_next_lg_crcv = NULL;
+      session->runtime_next_block = NULL;
+      if (coap_send_internal(session, next) == COAP_INVALID_MID) {
+        coap_runtime_abandon_streamed_body(session, lg_crcv, rcvd, 1);
+        session->last_con_handler_res = COAP_RESPONSE_OK;
+        return;
+      }
+    }
     coap_send_ack_lkd(session, rcvd);
     session->last_con_handler_res = COAP_RESPONSE_OK;
   }

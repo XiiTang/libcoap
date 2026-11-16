@@ -219,6 +219,12 @@ struct coap_session_t {
                                        been processed */
   coap_response_t last_con_handler_res; /**< The result of calling the response handler
                                        of the last CON */
+#if COAP_CLIENT_SUPPORT
+  /* Boundless fork: the next block request of a streamed body, held until the
+     response handler has answered the block that asked for it. */
+  coap_lg_crcv_t *runtime_next_lg_crcv;
+  coap_pdu_t *runtime_next_block;
+#endif /* COAP_CLIENT_SUPPORT */
 #if COAP_SERVER_SUPPORT
   coap_bin_const_t *client_cid;     /**< Contains client CID or NULL */
 #endif /* COAP_SERVER_SUPPORT */
