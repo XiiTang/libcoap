@@ -16,9 +16,11 @@ original request's method and options without its payload and sends it unasked,
 and would splice a new representation onto blocks already delivered. Upstream
 `develop` still restarts. The abandonment paths of a streamed Block2 body (ETag
 change, a missing ETag, Content-Format change, block tracking overflow, and a
-continuation request that cannot be built or sent) instead report
+continuation request that cannot be built) instead report
 `COAP_NACK_BODY_INCOMPLETE` to the nack handler with the request's own token,
 acknowledge the block without passing it on, and request nothing more. A
+continuation request that cannot be sent does the same after the block was
+passed on (see "A body the application lets go" below). A
 non-observing exchange is released; an observation keeps its state for its
 next notification. Single-body mode keeps upstream behavior. Regressions in
 libcoap-rs drive the native client through supplied I/O:
@@ -31,6 +33,44 @@ request that cannot be built fails only on allocation; one that cannot be sent
 through supplied I/O stops the whole client first, so neither has a case of its
 own. The complete CUnit suite (177 tests, 1387 assertions; it has no block
 receive case) passes with OpenSSL DTLS, TCP and OSCORE on macOS arm64.
+
+### A body the application lets go (Boundless #783)
+
+An application that lets a streamed body go (it dropped the body's first
+block, released the body, or found a block stale or of a replaced
+representation) could not stop libcoap from fetching the rest. The response
+handler answers only `COAP_RESPONSE_OK` (ACK) or `COAP_RESPONSE_FAIL` (RST),
+and upstream `coap_handle_response_get_block` (`src/coap_block.c`) sends the
+next block's request before it returns to `handle_response` (`src/coap_net.c`),
+which only then runs the handler. Upstream has no abandonment answer; FAIL
+sends an RST, which also deregisters an observation (RFC 7641 section 3.6).
+
+For a streamed body the next block's request is now held on the session
+(`runtime_next_block`, `runtime_next_lg_crcv`), and `handle_response` decides it
+once the handler has answered, with a third answer, `COAP_RESPONSE_ABANDON`:
+
+- OK sends the held request. If it cannot be sent, the body ends through
+  `coap_abandon_streamed_body` with `COAP_NACK_BODY_INCOMPLETE`, after the
+  block was passed on.
+- FAIL deletes it and sends the RST, as upstream does.
+- ABANDON deletes it and ends the body the same way without the NACK, since
+  the application asked: the block is acknowledged, an ordinary request's
+  block state is released, and an observation or a multicast responder keeps
+  its state for its next notification.
+- Where no request is held (a single block, a last block, a body that is not
+  streamed) ABANDON is OK. A held request no handler answered is deleted with
+  its session (`coap_session_mfree`).
+
+The libcoap-rs regressions
+`abandoning_an_observation_s_first_block_requests_nothing_and_the_next_notification_arrives`,
+`abandoning_a_later_block_of_a_request_requests_nothing_more_and_drops_its_state`,
+`abandoning_one_responder_s_body_leaves_another_s_going_on`,
+`abandoning_a_stale_first_block_of_an_idle_observation_requests_nothing`,
+`accepting_a_block_requests_the_next_once_after_the_answer` and
+`rejecting_a_block_resets_it_and_requests_nothing_more` answer each block by
+hand through supplied I/O. With the next request sent before the handler
+again, as upstream does, all six fail on macOS arm64; with this patch they
+pass.
 
 ## OSCORE ID Context presence
 

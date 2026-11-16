@@ -77,7 +77,15 @@ int coap_context_restore_runtime_replay(coap_context_t *, const uint8_t *, size_
 
 typedef enum coap_response_t {
   COAP_RESPONSE_FAIL, /**< Response not liked - send CoAP RST packet */
-  COAP_RESPONSE_OK    /**< Response is fine */
+  COAP_RESPONSE_OK,   /**< Response is fine */
+  /**
+   * Boundless fork: the response is fine, but its streamed body is let go.
+   * Nothing more is requested for that body, as when libcoap itself cannot
+   * complete it, without reporting COAP_NACK_BODY_INCOMPLETE; an observation
+   * goes on with its next notification. Anywhere else it is
+   * COAP_RESPONSE_OK.
+   */
+  COAP_RESPONSE_ABANDON
 } coap_response_t;
 
 /**
