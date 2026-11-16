@@ -3789,17 +3789,18 @@ coap_body_streamed(const coap_session_t *session, const coap_block_b_t *block) {
 }
 
 /*
- * Ends a streamed body libcoap cannot complete. Its request learns so at once,
- * by its own token, and nothing is requested again on its behalf; an
- * observation continues with its next notification. Returns 1: the received
- * block is acknowledged and not passed to the application.
+ * Ends a streamed body libcoap cannot complete, or that the application let
+ * go. With report, its request learns so at once, by its own token. Nothing is
+ * requested again on its behalf; an observation continues with its next
+ * notification. Returns 1: the received block is acknowledged and not passed
+ * to the application.
  */
 static int
-coap_abandon_streamed_body(coap_session_t *session, coap_lg_crcv_t *lg_crcv,
-                           coap_pdu_t *rcvd) {
+coap_abandon_streamed_body_as(coap_session_t *session, coap_lg_crcv_t *lg_crcv,
+                              coap_pdu_t *rcvd, int report) {
   coap_context_t *context = session->context;
 
-  if (context->nack_handler) {
+  if (report && context->nack_handler) {
     coap_update_token(&lg_crcv->pdu, lg_crcv->app_token->length, lg_crcv->app_token->s);
     coap_lock_callback(context,
                        context->nack_handler(session, &lg_crcv->pdu,
@@ -3819,6 +3820,19 @@ coap_abandon_streamed_body(coap_session_t *session, coap_lg_crcv_t *lg_crcv,
   LL_DELETE(session->lg_crcv, lg_crcv);
   coap_block_delete_lg_crcv(session, lg_crcv);
   return 1;
+}
+
+static int
+coap_abandon_streamed_body(coap_session_t *session, coap_lg_crcv_t *lg_crcv,
+                           coap_pdu_t *rcvd) {
+  return coap_abandon_streamed_body_as(session, lg_crcv, rcvd, 1);
+}
+
+void
+coap_runtime_abandon_streamed_body(coap_session_t *session,
+                                   coap_lg_crcv_t *lg_crcv,
+                                   coap_pdu_t *rcvd, int report) {
+  coap_abandon_streamed_body_as(session, lg_crcv, rcvd, report);
 }
 
 int
@@ -4157,9 +4171,13 @@ reinit:
                 (void)coap_get_data(&lg_crcv->pdu, &length, &data);
                 coap_add_data_large_internal(session, NULL, pdu, NULL, NULL, -1, 0, length, data, NULL, NULL, 0, 0);
               }
-              if (coap_send_internal(session, pdu) == COAP_INVALID_MID) {
-                if (coap_body_streamed(session, &block))
-                  return coap_abandon_streamed_body(session, lg_crcv, rcvd);
+              if (coap_body_streamed(session, &block)) {
+                /* The response handler answers this block first: it may let
+                   the body go, and then nothing more is requested for it
+                   (handle_response sends or drops this request). */
+                session->runtime_next_block = pdu;
+                session->runtime_next_lg_crcv = lg_crcv;
+              } else if (coap_send_internal(session, pdu) == COAP_INVALID_MID) {
                 goto fail_resp;
               }
             }

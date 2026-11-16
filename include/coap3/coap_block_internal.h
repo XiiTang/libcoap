@@ -385,6 +385,15 @@ int coap_add_data_large_response_lkd(coap_resource_t *resource,
 int coap_handle_response_send_block(coap_session_t *session, coap_pdu_t *sent,
                                     coap_pdu_t *rcvd);
 
+/**
+ * Boundless fork: ends the streamed body @p lg_crcv libcoap cannot complete or
+ * the application let go, acknowledging @p rcvd. With @p report, its request
+ * learns so through COAP_NACK_BODY_INCOMPLETE.
+ */
+void coap_runtime_abandon_streamed_body(coap_session_t *session,
+                                        coap_lg_crcv_t *lg_crcv,
+                                        coap_pdu_t *rcvd, int report);
+
 int coap_handle_response_get_block(coap_context_t *context,
                                    coap_session_t *session,
                                    coap_pdu_t *sent,
