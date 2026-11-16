@@ -113,3 +113,18 @@ messages (34 assertions). Removing only this hook makes the same test fail;
 restoring it passes again. The CSM and the ending PDU are two actual ingress
 polls. The test runner uses CUnit's assertion-failure count as its exit status.
 The binding's runtime-I/O checkpoint/consumer regressions pass (21 tests).
+
+## Next Request-Tag (Boundless #770)
+
+A request whose body libcoap splits into Block1 gains a Request-Tag
+(`src/coap_block.c` `coap_add_data_large_internal`), encoded from
+`++session->tx_rtag` in as few bytes as the value needs; the counter starts
+at a random value (`src/coap_session.c` `coap_make_session`). An
+embedding application that refuses, before sending, a request whose options
+leave no room for one block cannot know that option's length, so its
+admission was either looser or stricter than libcoap's own. Upstream has no
+accessor. `coap_session_runtime_next_rtag` returns the value the next added
+Request-Tag carries, and changes nothing. The libcoap-rs regression
+`request_admission_is_libcoaps_body_condition_at_its_boundary` admits a split
+body exactly at the allowance computed with it and checks that libcoap's own
+`coap_add_data_large_request` refuses one byte more.

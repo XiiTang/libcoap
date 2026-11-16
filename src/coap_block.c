@@ -4472,4 +4472,7 @@ coap_session_forget_runtime_token(coap_session_t *session, const uint8_t *token,
 void coap_session_set_runtime_peer(coap_session_t *session, const coap_address_t *peer) {
   if (session->context->runtime_read) session->addr_info.remote = *peer;
 }
+uint32_t coap_session_runtime_next_rtag(const coap_session_t *session) {
+  return session->tx_rtag + 1;
+}
 #endif

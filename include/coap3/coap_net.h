@@ -66,6 +66,8 @@ void coap_context_set_runtime_received(coap_context_t *, coap_runtime_received_t
 typedef int (*coap_runtime_replay_t)(void *, const uint8_t *, size_t, uint64_t, uint64_t, uint8_t);
 int coap_session_forget_runtime_token(coap_session_t *, const uint8_t *, size_t);
 void coap_session_set_runtime_peer(coap_session_t *, const coap_address_t *);
+/* The Request-Tag value the session's next added Request-Tag option carries. */
+uint32_t coap_session_runtime_next_rtag(const coap_session_t *);
 int coap_context_set_runtime_io(coap_context_t *, void *, coap_runtime_read_t,
                                coap_runtime_write_t, size_t maximum_pdu);
 void coap_context_set_runtime_verify(coap_context_t *, coap_runtime_verify_t);
