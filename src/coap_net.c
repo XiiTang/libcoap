@@ -4227,15 +4227,19 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
     if (!is_ping_rst && !is_ext_token_rst)
       coap_log_alert("got RST for mid=0x%04x\n", pdu->mid);
 
-    if (session->con_active) {
+    /* find message id in sendqueue to stop retransmission */
+    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, NULL, &sent);
+
+    /*
+     * Only a removed CON was counted in con_active: a Reset to a NON (which
+     * is never queued) must not free another request's NSTART slot.
+     */
+    if (sent && session->con_active) {
       session->con_active--;
       if (session->state == COAP_SESSION_STATE_ESTABLISHED)
         /* Flush out any entries on session->delayqueue */
         coap_session_connected(session);
     }
-
-    /* find message id in sendqueue to stop retransmission */
-    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, NULL, &sent);
 
     if (sent) {
       coap_cancel(context, sent);
