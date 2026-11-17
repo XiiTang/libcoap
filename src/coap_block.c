@@ -4499,48 +4499,83 @@ runtime_token_matches(coap_session_t *session, const coap_bin_const_t *wire,
   return 0;
 }
 
+static int
+runtime_token_matches_any(coap_session_t *session, const coap_bin_const_t *wire,
+                          const coap_bin_const_t *tokens, size_t count) {
+  size_t i;
+  for (i = 0; i < count; i++)
+    if (runtime_token_matches(session, wire, &tokens[i])) return 1;
+  return 0;
+}
+
+/*
+ * Forget every listed request at once. Releasing the delay queue after an
+ * in-flight CON is removed must not send another listed request's message,
+ * so every token being forgotten is removed before the release.
+ */
 int
-coap_session_forget_runtime_token(coap_session_t *session, const uint8_t *token, size_t length) {
-  coap_bin_const_t app = {length, token};
+coap_session_forget_runtime_tokens(coap_session_t *session, const coap_bin_const_t *tokens,
+                                   size_t count) {
   coap_queue_t **link, *q;
   coap_lg_crcv_t *rcv, *rtmp;
   coap_lg_xmit_t *xmit, *xtmp;
-  if (!session->context->runtime_read || length > 8) return 0;
+  size_t i;
+  int removed_con = 0;
+  if (!session->context->runtime_read) return 0;
+  for (i = 0; i < count; i++)
+    if (tokens[i].length > 8) return 0;
   coap_lock_lock(session->context, return 0);
-  if (session->partial_write && session->delayqueue && runtime_token_matches(session, &session->delayqueue->pdu->actual_token, &app)) { coap_lock_unlock(session->context); return 0; }
+  if (session->partial_write && session->delayqueue &&
+      runtime_token_matches_any(session, &session->delayqueue->pdu->actual_token, tokens, count)) {
+    coap_lock_unlock(session->context);
+    return 0;
+  }
   link = &session->context->sendqueue;
   while ((q = *link)) {
-    if (q->session == session && runtime_token_matches(session, &q->pdu->actual_token, &app)) {
+    if (q->session == session &&
+        runtime_token_matches_any(session, &q->pdu->actual_token, tokens, count)) {
       *link = q->next;
       if (q->next) q->next->t += q->t;
-      if (q->pdu->type == COAP_MESSAGE_CON && session->con_active) session->con_active--;
+      if (q->pdu->type == COAP_MESSAGE_CON && session->con_active) {
+        session->con_active--;
+        removed_con = 1;
+      }
       q->next = NULL;
       coap_delete_node_lkd(q);
     } else link = &q->next;
   }
   link = &session->delayqueue;
   while ((q = *link)) {
-    if (runtime_token_matches(session, &q->pdu->actual_token, &app)) {
+    if (runtime_token_matches_any(session, &q->pdu->actual_token, tokens, count)) {
       *link = q->next; q->next = NULL; coap_delete_node_lkd(q);
     } else link = &q->next;
   }
 #if COAP_OSCORE_SUPPORT
   oscore_association_t *association, *atmp;
   HASH_ITER(hh, session->associations, association, atmp) {
-    if (runtime_token_matches(session, association->token, &app))
+    if (runtime_token_matches_any(session, association->token, tokens, count))
       oscore_delete_association(session, association);
   }
 #endif
-  LL_FOREACH_SAFE(session->lg_xmit, xmit, xtmp) {
-    if (xmit->b.b1.app_token && coap_binary_equal(xmit->b.b1.app_token, &app)) {
-      LL_DELETE(session->lg_xmit, xmit); coap_block_delete_lg_xmit(session, xmit);
+  for (i = 0; i < count; i++) {
+    LL_FOREACH_SAFE(session->lg_xmit, xmit, xtmp) {
+      if (xmit->b.b1.app_token && coap_binary_equal(xmit->b.b1.app_token, &tokens[i])) {
+        LL_DELETE(session->lg_xmit, xmit); coap_block_delete_lg_xmit(session, xmit);
+      }
+    }
+    LL_FOREACH_SAFE(session->lg_crcv, rcv, rtmp) {
+      if (coap_binary_equal(rcv->app_token, &tokens[i])) {
+        LL_DELETE(session->lg_crcv, rcv); coap_block_delete_lg_crcv(session, rcv);
+      }
     }
   }
-  LL_FOREACH_SAFE(session->lg_crcv, rcv, rtmp) {
-    if (coap_binary_equal(rcv->app_token, &app)) {
-      LL_DELETE(session->lg_crcv, rcv); coap_block_delete_lg_crcv(session, rcv);
-    }
-  }
+  /*
+   * As coap_cancel_all_messages: a removed CON frees an NSTART slot. NSTART
+   * governs only unreliable transports, and a stream may be partly written.
+   */
+  if (removed_con && COAP_PROTO_NOT_RELIABLE(session->proto) &&
+      session->state == COAP_SESSION_STATE_ESTABLISHED)
+    coap_session_connected(session);
   coap_lock_unlock(session->context);
   return 1;
 }
