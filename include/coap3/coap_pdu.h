@@ -527,6 +527,12 @@ int coap_add_data(coap_pdu_t *pdu,
 uint8_t *coap_add_data_after(coap_pdu_t *pdu, size_t len);
 
 /**
+ * Boundless fork: the bytes @p pdu holds after its header: its token,
+ * options, payload marker and payload.
+ */
+size_t coap_pdu_runtime_used_size(const coap_pdu_t *pdu);
+
+/**
  * Retrieves the length and data pointer of specified PDU. Returns 0 on error or
  * 1 if *len and *data have correct values. Note that these values are destroyed
  * with the pdu.

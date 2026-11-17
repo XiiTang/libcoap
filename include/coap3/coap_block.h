@@ -337,6 +337,20 @@ COAP_API int coap_add_data_large_request(coap_session_t *session,
                                          void *app_ptr);
 
 /**
+ * Boundless fork: coap_add_data_large_request(), which also sets
+ * @p too_large to 1 when the room left for the body, after the token, the
+ * options and libcoap's reservations, cannot hold the body or one block
+ * ("not enough space"), and to 0 otherwise. Any other refusal leaves it 0.
+ */
+COAP_API int coap_add_data_large_runtime_request(coap_session_t *session,
+                                                 coap_pdu_t *pdu,
+                                                 size_t length,
+                                                 const uint8_t *data,
+                                                 coap_release_large_data_t release_func,
+                                                 void *app_ptr,
+                                                 int *too_large);
+
+/**
  * Associates given data with the @p response pdu that is passed as fourth
  * parameter.
  *

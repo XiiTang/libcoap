@@ -113,3 +113,40 @@ messages (34 assertions). Removing only this hook makes the same test fail;
 restoring it passes again. The CSM and the ending PDU are two actual ingress
 polls. The test runner uses CUnit's assertion-failure count as its exit status.
 The binding's runtime-I/O checkpoint/consumer regressions pass (21 tests).
+
+## A request that does not fit, typed (Boundless #770)
+
+An embedding application that must tell a program that a request was not sent
+because it does not fit needs libcoap's own size decision, not a copy of it: a
+copy diverges wherever libcoap normalises the request first (it removes
+Q-Block1 without Q-Block support, encodes a Request-Tag from a random counter in
+as few bytes as it needs, reserves OSCORE overhead). Upstream refuses a request
+that does not fit at three points, each with the bare 0 it also returns for
+unrelated failures:
+
+1. `coap_add_token` and `coap_add_option` (`src/coap_pdu.c`) return 0 when
+   `coap_pdu_check_resize` cannot grow the PDU past its `max_size`, as they do
+   when an allocation fails.
+2. `coap_add_data_large_internal` (`src/coap_block.c`) logs "not enough space,
+   even the smallest block does not fit (2)" and returns 0 when the room left
+   for the body after the token, options, a response's Echo, OSCORE and the
+   token pad is below 16 bytes and below the body.
+3. The same function logs "(3)" and returns 0 when, after it adds Block1, Size1
+   and a Request-Tag, that room is below one 16-byte block.
+
+The same 0 also answers a PDU that already holds data, an OSCORE Proxy-Uri
+rebuild that fails, an allocation, and a reliable session before its CSM
+(`coap_client_delay_first`). Points 1 to 3 are unchanged.
+`coap_add_data_large_runtime_request` is `coap_add_data_large_request` with an
+out-parameter, `too_large`, that points 2 and 3 set; every other refusal leaves
+it 0. `coap_pdu_runtime_used_size` returns a PDU's `used_size`, so the
+application can measure a request it builds without a size bound when point 1
+refuses it. Upstream has neither. Neither reports a room: libcoap knows the room
+it normalised only at the step that refused.
+
+The libcoap-rs regression
+`a_request_is_refused_as_too_large_exactly_where_libcoap_refuses_it` drives each
+route (whole body, split body, OSCORE, a short Block1 delta, a Q-Block1 option
+libcoap removes, a body over 16 bytes refused at point 2) to libcoap's own
+boundary: one option byte more is refused as too large and writes nothing, and
+at the boundary the request is sent.

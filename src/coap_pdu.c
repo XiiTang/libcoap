@@ -335,6 +335,11 @@ coap_pdu_resize(coap_pdu_t *pdu, size_t new_size) {
   return 1;
 }
 
+size_t
+coap_pdu_runtime_used_size(const coap_pdu_t *pdu) {
+  return pdu->used_size;
+}
+
 int
 coap_pdu_check_resize(coap_pdu_t *pdu, size_t size) {
   if (size > pdu->alloc_size) {

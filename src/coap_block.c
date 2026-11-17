@@ -631,19 +631,24 @@ coap_find_lg_xmit_response(const coap_session_t *session,
 }
 #endif /* COAP_SERVER_SUPPORT */
 
+/*
+ * Boundless fork: too_large, when not NULL, is set to 1 when a size step, (2)
+ * or (3) below, refuses the body. Every other refusal leaves it unset.
+ */
 static int
-coap_add_data_large_internal(coap_session_t *session,
-                             const coap_pdu_t *request,
-                             coap_pdu_t *pdu,
-                             coap_resource_t *resource,
-                             const coap_string_t *query,
-                             int maxage,
-                             uint64_t etag,
-                             size_t length,
-                             const uint8_t *data,
-                             coap_release_large_data_t release_func,
-                             void *app_ptr,
-                             int single_request, coap_pdu_code_t request_method) {
+coap_add_data_large_internal_sized(coap_session_t *session,
+                                  const coap_pdu_t *request,
+                                  coap_pdu_t *pdu,
+                                  coap_resource_t *resource,
+                                  const coap_string_t *query,
+                                  int maxage,
+                                  uint64_t etag,
+                                  size_t length,
+                                  const uint8_t *data,
+                                  coap_release_large_data_t release_func,
+                                  void *app_ptr,
+                                  int single_request, coap_pdu_code_t request_method,
+                                  int *too_large) {
 
   ssize_t avail;
   coap_block_b_t block;
@@ -810,6 +815,8 @@ coap_add_data_large_internal(coap_session_t *session,
   if (avail < 16 && ((ssize_t)length > avail || have_block_defined)) {
     /* bad luck, this is the smallest block size */
     coap_log_debug("not enough space, even the smallest block does not fit (2)\n");
+    if (too_large)
+      *too_large = 1;
     goto fail;
   }
 
@@ -1021,6 +1028,8 @@ coap_add_data_large_internal(coap_session_t *session,
       /* chunk size change down */
       if (avail < 16) {
         coap_log_warn("not enough space, even the smallest block does not fit (3)\n");
+        if (too_large)
+          *too_large = 1;
         goto fail;
       }
       blk_size = coap_flsll((long long)avail) - 4 - 1;
@@ -1082,6 +1091,25 @@ fail:
   return 0;
 }
 
+static int
+coap_add_data_large_internal(coap_session_t *session,
+                             const coap_pdu_t *request,
+                             coap_pdu_t *pdu,
+                             coap_resource_t *resource,
+                             const coap_string_t *query,
+                             int maxage,
+                             uint64_t etag,
+                             size_t length,
+                             const uint8_t *data,
+                             coap_release_large_data_t release_func,
+                             void *app_ptr,
+                             int single_request, coap_pdu_code_t request_method) {
+  return coap_add_data_large_internal_sized(session, request, pdu, resource, query,
+                                            maxage, etag, length, data,
+                                            release_func, app_ptr, single_request,
+                                            request_method, NULL);
+}
+
 #if COAP_CLIENT_SUPPORT
 COAP_API int
 coap_add_data_large_request(coap_session_t *session,
@@ -1119,6 +1147,32 @@ coap_add_data_large_request_lkd(coap_session_t *session,
   }
   return coap_add_data_large_internal(session, NULL, pdu, NULL, NULL, -1, 0,
                                       length, data, release_func, app_ptr, 0, 0);
+}
+
+COAP_API int
+coap_add_data_large_runtime_request(coap_session_t *session,
+                                    coap_pdu_t *pdu,
+                                    size_t length,
+                                    const uint8_t *data,
+                                    coap_release_large_data_t release_func,
+                                    void *app_ptr,
+                                    int *too_large) {
+  int ret;
+
+  *too_large = 0;
+  coap_lock_lock(session->context, return 0);
+  if (coap_client_delay_first(session) == 0) {
+    if (release_func) {
+      coap_lock_callback(session->context, release_func(session, app_ptr));
+    }
+    ret = 0;
+  } else {
+    ret = coap_add_data_large_internal_sized(session, NULL, pdu, NULL, NULL, -1, 0,
+                                             length, data, release_func, app_ptr,
+                                             0, 0, too_large);
+  }
+  coap_lock_unlock(session->context);
+  return ret;
 }
 #endif /* ! COAP_CLIENT_SUPPORT */
 
