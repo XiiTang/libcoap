@@ -447,6 +447,57 @@ coap_cancel_observe(coap_session_t *session, coap_binary_t *token,
   return ret;
 }
 
+/*
+ * Boundless ends an observation locally at deregistration and sends one
+ * notice. It carries no body and builds no upload, so nothing of the
+ * observation outlives the forget that follows. Its token is the last
+ * registration token saved (the final Block1 block's for a large FETCH),
+ * otherwise the token the upstream cancellation would start on.
+ */
+static int
+runtime_cancel_observe(coap_session_t *session, coap_binary_t *token,
+                       coap_pdu_type_t type) {
+  coap_lg_crcv_t *lg_crcv;
+
+  LL_FOREACH(session->lg_crcv, lg_crcv) {
+    if (lg_crcv->observe_set) {
+      if ((!token && !lg_crcv->app_token->length) || (token &&
+                                                      coap_binary_equal(token, lg_crcv->app_token))) {
+        uint8_t buf[8];
+        coap_opt_filter_t drop_options;
+        coap_pdu_t *pdu;
+        coap_bin_const_t *otoken = (coap_bin_const_t *)lg_crcv->app_token;
+
+        if (lg_crcv->obs_token) {
+          if (lg_crcv->obs_token_cnt && lg_crcv->obs_token[lg_crcv->obs_token_cnt - 1])
+            otoken = lg_crcv->obs_token[lg_crcv->obs_token_cnt - 1];
+          else if (lg_crcv->obs_token[0])
+            otoken = lg_crcv->obs_token[0];
+        }
+        memset(&drop_options, 0, sizeof(coap_opt_filter_t));
+        coap_option_filter_set(&drop_options, COAP_OPTION_BLOCK1);
+        coap_option_filter_set(&drop_options, COAP_OPTION_SIZE1);
+#if COAP_Q_BLOCK_SUPPORT
+        coap_option_filter_set(&drop_options, COAP_OPTION_Q_BLOCK1);
+#endif /* COAP_Q_BLOCK_SUPPORT */
+        /* Options only: the duplicate carries no payload */
+        pdu = coap_pdu_duplicate_lkd(&lg_crcv->pdu, session, otoken->length,
+                                     otoken->s, &drop_options);
+        lg_crcv->observe_set = 0;
+        if (pdu == NULL)
+          return 0;
+        pdu->type = type;
+        coap_update_option(pdu, COAP_OPTION_OBSERVE,
+                           coap_encode_var_safe(buf, sizeof(buf),
+                                                COAP_OBSERVE_CANCEL),
+                           buf);
+        return coap_send_internal(session, pdu) != COAP_INVALID_MID;
+      }
+    }
+  }
+  return 0;
+}
+
 int
 coap_cancel_observe_lkd(coap_session_t *session, coap_binary_t *token,
                         coap_pdu_type_t type) {
@@ -462,6 +513,8 @@ coap_cancel_observe_lkd(coap_session_t *session, coap_binary_t *token,
                    coap_session_str(session));
     return 0;
   }
+  if (session->context->runtime_read)
+    return runtime_cancel_observe(session, token, type);
 
   LL_FOREACH_SAFE(session->lg_crcv, lg_crcv, q) {
     if (lg_crcv->observe_set) {
