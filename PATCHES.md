@@ -190,3 +190,104 @@ route (whole body, split body, OSCORE, a short Block1 delta, a Q-Block1 option
 libcoap removes, a body over 16 bytes refused at point 2) to libcoap's own
 boundary: one option byte more is refused as too large and writes nothing, and
 at the boundary the request is sent.
+
+## Upstream ports for blockwise answers (Boundless CoAP stage 1)
+
+Two upstream fixes, ported unchanged ahead of the next-release catch-up:
+
+- `64d5eab7` ("Fix coap_check_send_need_lg_crcv() for requests only"): a NON
+  or reliable DELETE answered with Block2 created no `lg_crcv`, and the empty
+  ACK branch checked the response instead of the sent request, so the answer
+  was dropped and the request never answered. Applied with `git cherry-pick`.
+- `592b7bc1` ("Update the lg_crcv for each block"): a Block2 download was
+  expired at `MAX_TRANSMIT_WAIT` after its request however fast its blocks
+  arrived. The fork's `if (updated_block)` differs from upstream's (no
+  `body_free`; the BERT condition), so the three lines were placed by hand at
+  the start of that branch, as upstream places them.
+
+Boundless reproduced both before the port (CoAP stage 1 design, runs at
+`865feecf`); the binding's suite passes with them.
+
+## Forget a batch of runtime tokens (Boundless CoAP stage 1, F7)
+
+`coap_session_forget_runtime_tokens` replaces the single-token
+`coap_session_forget_runtime_token`. Forgetting an in-flight CON removed it from
+the send queue and lowered `con_active`, but nothing released the delay queue:
+a request delayed behind it (NSTART 1) was sent only when another exchange
+completed. Upstream's own token cancellation, `coap_cancel_all_messages`
+(`src/coap_net.c`), flushes the delay queue through `coap_session_connected`
+after lowering `con_active`; the forget now does the same, once, after every
+listed token's queued messages, associations and block state are removed. A
+caller ending several requests passes all their tokens, so the release cannot
+send a request that is itself being forgotten. The release runs only on an
+unreliable session (NSTART governs only UDP and DTLS), so a partly written
+stream head is never restarted. A batch whose token matches a partly written
+delay-queue head is refused whole, as the single-token call was.
+
+Regressions (libcoap-rs): `forgetting_an_in_flight_con_sends_the_request_delayed_behind_it`
+and `forgetting_several_requests_at_once_sends_none_of_them`. Both fail with
+the release disabled and pass with it on macOS arm64.
+
+## A Reset frees an NSTART slot only for a CON (Boundless CoAP stage 1)
+
+`coap_dispatch`'s Reset branch lowered `con_active` and flushed the delay queue
+before it looked for the reset message. A Reset to a NON, which is never
+queued, then freed another request's slot, and a delayed CON was sent while
+another CON was still outstanding, against NSTART 1. Boundless sends its
+deregistration notice as a NON, so a peer's Reset to it made this routine. The
+branch now extracts the node after its existing classification and
+`runtime_received` callback, and lowers `con_active` and flushes only when it
+removed one: only CONs enter the send queue, as the ACK branch already assumes
+(`if (sent && session->con_active)`). Upstream develop (`68849057`) still
+decrements before the lookup; the change is proposable upstream.
+
+Regression (libcoap-rs): `a_reset_for_a_non_frees_no_nstart_slot`, with a NON,
+an outstanding CON B and a delayed CON C: a Reset for the NON leaves C delayed
+until B is answered. It fails without the change and passes with it on macOS
+arm64.
+
+## One bodyless deregistration notice under runtime I/O (Boundless CoAP stage 1)
+
+Boundless ends an observation locally at deregistration and forgets its native
+state in the same step (owner decision, 2026-11-17). Upstream
+`coap_cancel_observe_lkd` re-sends the registration with Observe 1 and the
+whole body: a FETCH whose body needs Block1 is uploaded again in an `lg_xmit`
+that starts on `obs_token[0]` and goes on with counter tokens from the state
+base. That upload outlived the forget (its application token is the Echo token
+when the registration was resent with Echo), and a late 2.31 sent the next
+cancellation block for an ended observation.
+
+With `context->runtime_read` set, `coap_cancel_observe_lkd` now calls
+`runtime_cancel_observe`: one message, the registration's method and options
+without its payload and without Block1, Size1 and Q-Block1, with Observe 1, on
+`obs_token[obs_token_cnt - 1]` when set, otherwise upstream's own selection
+(`obs_token[0]`, else the application token). It is sent with
+`coap_send_internal`, as upstream sends its cancellation, and builds no
+`lg_xmit`. Without `runtime_read` upstream's code runs unchanged, so ordinary
+libcoap clients keep the re-upload. The method follows node-coap (the same
+method, no body); go-coap and Californium send GET, which a FETCH-only libcoap
+resource answers 4.05 before cancellation is reached.
+
+What this gives up, accepted as best effort (owner decision, 2026-11-17): the
+notice's token can miss the one the peer registered (a final Block1 block or a
+protected OSCORE registration resent with Echo saves no token; a multi-block
+FETCH re-registered through Echo saves its new token at index 0), and a
+libcoap server can no longer match a bodyless FETCH through its body-keyed
+request cache. The peer then keeps notifying until a Reset or the connection's
+end. Upstream's Echo and OSCORE token tracking is untouched, so the catch-up's
+fixes there (for example `beb92454`) reach the notice.
+
+Regressions (libcoap-rs) assert the notice on the wire:
+`a_get_observation_is_deregistered_by_one_bodyless_non_on_its_token`,
+`a_get_observation_resent_with_echo_is_deregistered_on_the_echo_token`,
+`an_observation_re_registered_through_echo_on_a_continuation_is_deregistered_on_the_new_token`
+(a NON GET established by a Block2 first block, its continuation answered 4.01
+Echo, re-registered on a new token) and
+`a_multi_block_fetch_observation_is_deregistered_by_one_bodyless_fetch_on_its_final_block_token`
+(a three-block FETCH; a late 2.31 continues no upload).
+`a_fetch_whose_final_block_was_resent_with_echo_gets_one_bodyless_notice`
+asserts one bodyless notice only. Without the patch the two FETCH cases fail
+(the body is re-uploaded) and the three GET cases pass, since a single-message
+registration's notice equals upstream's but for the body. All pass with it on
+macOS arm64; the binding's full runtime-I/O suite (43 tests) and strict Clippy
+pass.
