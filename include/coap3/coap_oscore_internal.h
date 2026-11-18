@@ -114,8 +114,8 @@ coap_pdu_t *coap_oscore_new_pdu_encrypted_lkd(coap_session_t *session,
  * @param session The session that will handle the transport of the
  *                specified @p pdu.
  * @param pdu     The PDU to decrypt if necessary.
- * @param matched The admitted ACK's queue match for a supplied datagram
- *                client, or NULL for the ordinary OSCORE path.
+ * @param matched The admitted response's queue match for a supplied client,
+ *                or NULL for the ordinary OSCORE path.
  *
  * @return The decrypted @p pdu, or @c NULL on error.
  */

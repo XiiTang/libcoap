@@ -677,6 +677,7 @@ oscore_free_association(oscore_association_t *association) {
   if (association) {
     coap_delete_pdu_lkd(association->sent_pdu);
     coap_delete_bin_const(association->token);
+    coap_delete_bin_const(association->runtime_app_token);
     coap_delete_bin_const(association->aad);
     coap_delete_bin_const(association->nonce);
     coap_delete_bin_const(association->partial_iv);
@@ -707,6 +708,18 @@ oscore_new_association(coap_session_t *session,
   if (sent_pdu) {
     size_t size;
     const uint8_t *data;
+#if COAP_CLIENT_SUPPORT
+    if (session->type == COAP_SESSION_TYPE_CLIENT && session->context->runtime_replay &&
+        (session->block_mode & COAP_BLOCK_USE_LIBCOAP)) {
+      const coap_bin_const_t *app = coap_block_app_token(session, sent_pdu);
+
+      if (app) {
+        association->runtime_app_token = coap_new_bin_const(app->s, app->length);
+        if (!association->runtime_app_token)
+          goto error;
+      }
+    }
+#endif /* COAP_CLIENT_SUPPORT */
 
     association->sent_pdu = coap_pdu_duplicate_lkd(sent_pdu, session,
                                                    token->length, token->s, NULL);

@@ -341,3 +341,26 @@ The opt-in test build can refuse the next initial direct CON allocation
 on one context. Boundless's `initial_con_without_a_holder_sends_nothing`
 checks the Program's send error, absence of the refused request on the wire
 and the next CON's successful response with no other packet to free credit.
+
+## Controlled OSCORE response admission and Echo ownership
+
+Upstream v4.3.5b reduces the Partial IV to the wire Observe serial and
+changes association state before all inner message validation. Its Echo
+path cancels by token, then decrements CON credit again and consumes the
+challenge even when it cannot retry. For supplied clients, admit the
+authenticated inner response after durable replay and before association
+mutation. Keep the confirmed registration's full Partial IV watermark.
+Discharge only actual detached nodes. Prepare the block-mode Echo retry
+while the original dispatch is intact. If preparation cannot produce a
+retry, ordinary dispatch delivers the peer's 4.01. The controlled OSCORE
+association keeps the application token of a native Block1 alias so the
+response callback and the existing forget batch can still find its owner
+after block expiry. A prepared retry's send refusal reports the original
+request's native send failure.
+Keep the ordinary OSCORE and Appendix B.2 paths.
+
+Boundless's `independent_oscore_inner_admission_order_and_echo_disposition`
+covers authenticated malformed ACK, absent initial IV, stale and
+malformed terminal responses, native receive-state expiry, the aliased
+Block1 answer after both block records expire, and retry send refusal.
+The test-only expiry hook runs the real native sweeps.

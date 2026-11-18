@@ -586,10 +586,9 @@ coap_cancel_observe_lkd(coap_session_t *session, coap_binary_t *token,
 }
 
 #if COAP_OSCORE_SUPPORT
-coap_mid_t
-coap_retransmit_oscore_pdu(coap_session_t *session,
-                           coap_pdu_t *pdu,
-                           coap_opt_t *echo) {
+static coap_pdu_t *
+coap_prepare_oscore_retry(coap_session_t *session, coap_pdu_t *pdu,
+                           coap_opt_t *echo, int runtime) {
   coap_lg_crcv_t *lg_crcv;
   uint64_t token_match =
       STATE_TOKEN_BASE(coap_decode_var_bytes8(pdu->actual_token.s,
@@ -613,16 +612,22 @@ coap_retransmit_oscore_pdu(coap_session_t *session,
 
     /* Re-send request with new token */
     token = STATE_TOKEN_FULL(lg_crcv->state_token,
-                             ++lg_crcv->retry_counter);
+                             runtime ? lg_crcv->retry_counter + 1 : ++lg_crcv->retry_counter);
     ltoken_len = coap_encode_var_safe8(ltoken, sizeof(token), token);
     /* There could be a Block option in pdu */
     resend_pdu = coap_pdu_duplicate_lkd(pdu, session, ltoken_len,
                                         ltoken, NULL);
     if (!resend_pdu)
-      goto error;
+      return NULL;
     if (echo) {
-      coap_insert_option(resend_pdu, COAP_OPTION_ECHO, coap_opt_length(echo),
-                         coap_opt_value(echo));
+      if (runtime) {
+        if (!coap_update_option(resend_pdu, COAP_OPTION_ECHO, coap_opt_length(echo),
+                                 coap_opt_value(echo)))
+          goto error;
+      } else {
+        coap_insert_option(resend_pdu, COAP_OPTION_ECHO, coap_opt_length(echo),
+                           coap_opt_value(echo));
+      }
     }
     if (coap_get_data(&lg_crcv->pdu, &data_len, &data)) {
       if (coap_get_block_b(session, resend_pdu, COAP_OPTION_BLOCK1, &block)) {
@@ -630,13 +635,32 @@ coap_retransmit_oscore_pdu(coap_session_t *session,
           data_len = block.chunk_size;
         }
       }
-      coap_add_data(resend_pdu, data_len, data);
+      if (!coap_add_data(resend_pdu, data_len, data) && runtime)
+        goto error;
     }
 
-    return coap_send_internal(session, resend_pdu);
+    if (runtime)
+      lg_crcv->retry_counter++;
+    return resend_pdu;
   }
+  return NULL;
+
 error:
-  return COAP_INVALID_MID;
+  coap_delete_pdu_lkd(resend_pdu);
+  return NULL;
+}
+
+coap_pdu_t *
+coap_prepare_runtime_oscore_retry(coap_session_t *session, coap_pdu_t *pdu,
+                                   coap_opt_t *echo) {
+  return coap_prepare_oscore_retry(session, pdu, echo, 1);
+}
+
+coap_mid_t
+coap_retransmit_oscore_pdu(coap_session_t *session, coap_pdu_t *pdu,
+                           coap_opt_t *echo) {
+  coap_pdu_t *retry = coap_prepare_oscore_retry(session, pdu, echo, 0);
+  return retry ? coap_send_internal(session, retry) : COAP_INVALID_MID;
 }
 #endif /* COAP_OSCORE_SUPPORT */
 #endif /* COAP_CLIENT_SUPPORT */
@@ -1615,6 +1639,20 @@ expire:
   }
   return ret;
 }
+
+#ifdef COAP_RUNTIME_TEST
+void
+coap_session_test_expire_block_state(coap_session_t *session) {
+  coap_tick_t now, remaining;
+
+  coap_lock_lock(session->context, return);
+  coap_ticks(&now);
+  now += COAP_MAX_TRANSMIT_WAIT_TICKS(session);
+  coap_block_check_lg_crcv_timeouts(session, now, &remaining);
+  coap_block_check_lg_xmit_timeouts(session, now, &remaining);
+  coap_lock_unlock(session->context);
+}
+#endif /* COAP_RUNTIME_TEST */
 #endif /* COAP_CLIENT_SUPPORT */
 
 #if COAP_SERVER_SUPPORT
@@ -3356,6 +3394,8 @@ check_freshness(coap_session_t *session, coap_pdu_t *rcvd, coap_pdu_t *sent,
   coap_opt_iterator_t opt_iter;
   coap_opt_t *opt = coap_check_option(rcvd, COAP_OPTION_ECHO, &opt_iter);
 
+  if (rcvd->runtime_echo_final)
+    return 0;
   if (opt) {
     if (sent || lg_xmit || lg_crcv) {
       /* Need to retransmit original request with Echo option added */
@@ -4543,6 +4583,13 @@ runtime_token_matches(coap_session_t *session, const coap_bin_const_t *wire,
   coap_lg_xmit_t *xmit;
   uint64_t base;
   if (coap_binary_equal(wire, app)) return 1;
+#if COAP_OSCORE_SUPPORT
+  coap_bin_const_t key = *wire;
+  oscore_association_t *association = oscore_find_association(session, &key);
+
+  if (association && association->runtime_app_token)
+    return coap_binary_equal(association->runtime_app_token, app);
+#endif /* COAP_OSCORE_SUPPORT */
   base = STATE_TOKEN_BASE(coap_decode_var_bytes8(wire->s, wire->length));
   LL_FOREACH(session->lg_crcv, rcv)
     if (coap_binary_equal(rcv->app_token, app) && base == STATE_TOKEN_BASE(rcv->state_token)) return 1;

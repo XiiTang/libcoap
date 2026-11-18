@@ -1651,19 +1651,12 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
     goto error;
   }
 
-  if (matched && !coap_request) {
-    if (!coap_runtime_admit_datagram(session, decrypt_pdu, matched))
-      goto error_no_ack;
-    if (!doing_resp_observe && association)
-      association->is_observe = 0;
-  }
-
   if (session->b_2_step != COAP_OSCORE_B_2_NONE) {
     session->b_2_step = COAP_OSCORE_B_2_NONE;
     coap_log_oscore("Appendix B.2 client finished\n");
   }
 #if COAP_CLIENT_SUPPORT
-  if (decrypt_pdu->code == COAP_RESPONSE_CODE(401) &&
+  if (!matched && decrypt_pdu->code == COAP_RESPONSE_CODE(401) &&
       (opt = coap_check_option(decrypt_pdu, COAP_OPTION_ECHO, &opt_iter))) {
     /* Server is requesting Echo refresh check */
     coap_cancel_all_messages(session->context,
@@ -1688,6 +1681,68 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
          rcp_ctx->last_seq, rcp_ctx->sliding_window, rcp_ctx->initial_state)) {
     oscore_roll_back_seq(rcp_ctx);
     goto error_no_ack;
+  }
+  if (matched && !coap_request) {
+    int64_t sequence = got_resp_piv ?
+        (int64_t)coap_decode_var_bytes8(response_partial_iv.s, response_partial_iv.length) : -1;
+
+    /* An authenticated input can be persisted even if message admission
+     * refuses it. Do not roll back the persisted replay window. */
+    runtime_snapshot = 0;
+    if (!COAP_PDU_IS_RESPONSE(decrypt_pdu)) {
+      if (decrypt_pdu->type == COAP_MESSAGE_CON)
+        coap_send_rst_lkd(session, decrypt_pdu);
+      coap_handle_event_lkd(session->context, COAP_EVENT_BAD_PACKET, session);
+      goto error_no_ack;
+    }
+    if (!coap_runtime_admit_input(session, decrypt_pdu, matched) ||
+        coap_runtime_response_duplicate(session, decrypt_pdu))
+      goto error_no_ack;
+    if (association->runtime_observe_confirmed &&
+        (!got_resp_piv || sequence <= association->runtime_observe_sequence))
+      goto error;
+
+#if COAP_CLIENT_SUPPORT
+    if ((session->block_mode & COAP_BLOCK_USE_LIBCOAP) &&
+        decrypt_pdu->code == COAP_RESPONSE_CODE(401) &&
+        (opt = coap_check_option(decrypt_pdu, COAP_OPTION_ECHO, &opt_iter))) {
+      coap_pdu_t *retry = sent_pdu ?
+          coap_prepare_runtime_oscore_retry(session, sent_pdu, opt) : NULL;
+
+      if (retry) {
+        if (!got_resp_piv)
+          association->runtime_response_seen = 1;
+        /* Only the CONs actually removed by cancellation give up credit. */
+        coap_cancel_all_messages(session->context, session, &pdu->actual_token);
+        coap_send_ack_lkd(session, pdu);
+        if (coap_send_internal(session, retry) == COAP_INVALID_MID &&
+            session->context->nack_handler) {
+          coap_check_update_token(session, decrypt_pdu);
+          coap_lock_callback(session->context,
+                             session->context->nack_handler(session, decrypt_pdu,
+                                                            COAP_NACK_RUNTIME_SEND_FAILED,
+                                                            pdu->mid));
+        }
+        goto error_no_ack;
+      }
+      /* The admitted challenge still owns the original dispatch and answer. */
+      decrypt_pdu->runtime_echo_final = 1;
+      /* Dispatch uses the authenticated wire token for message custody.
+       * The response callback needs the application token even if both
+       * native block records expired before this separate reply. */
+      decrypt_pdu->runtime_echo_app_token = association->runtime_app_token;
+      association->runtime_app_token = NULL;
+      doing_resp_observe = 0;
+    }
+#endif /* COAP_CLIENT_SUPPORT */
+
+    if (doing_resp_observe && COAP_RESPONSE_CLASS(decrypt_pdu->code) == 2) {
+      association->runtime_observe_confirmed = 1;
+      association->runtime_observe_sequence = sequence;
+      decrypt_pdu->runtime_observe_ordered = 1;
+    }
+    if (!doing_resp_observe)
+      association->is_observe = 0;
   }
   if (association && !coap_request && !got_resp_piv && session->context->runtime_replay)
     association->runtime_response_seen = 1;

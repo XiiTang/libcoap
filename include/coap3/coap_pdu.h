@@ -531,6 +531,8 @@ uint8_t *coap_add_data_after(coap_pdu_t *pdu, size_t len);
  * options, payload marker and payload.
  */
 size_t coap_pdu_runtime_used_size(const coap_pdu_t *pdu);
+/* The admitted OSCORE Observe head has already been ordered by full Partial IV. */
+int coap_pdu_runtime_observe_ordered(const coap_pdu_t *pdu);
 
 /**
  * Retrieves the length and data pointer of specified PDU. Returns 0 on error or

@@ -144,6 +144,7 @@ struct oscore_association_t {
   oscore_recipient_ctx_t *recipient_ctx;
   coap_pdu_t *sent_pdu;
   coap_bin_const_t *token;
+  coap_bin_const_t *runtime_app_token;
   coap_bin_const_t *aad;
   coap_bin_const_t *nonce;
   coap_bin_const_t *partial_iv;
@@ -151,6 +152,8 @@ struct oscore_association_t {
   coap_tick_t last_seen;
   uint8_t is_observe;
   uint8_t runtime_response_seen;
+  uint8_t runtime_observe_confirmed;
+  int64_t runtime_observe_sequence; /* -1 for an initial response without a Partial IV. */
 };
 
 /**

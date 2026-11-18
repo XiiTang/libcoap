@@ -408,9 +408,12 @@ void coap_dispatch(coap_context_t *context, coap_session_t *session,
 void coap_context_test_refuse_initial_con(coap_context_t *context);
 #endif /* COAP_RUNTIME_TEST */
 
-/* The supplied datagram client must admit input before detaching a CON. */
-int coap_runtime_admit_datagram(coap_session_t *session, coap_pdu_t *pdu,
+/* Validate supplied client input before any exchange or OSCORE state change. */
+int coap_runtime_admit_input(coap_session_t *session, coap_pdu_t *pdu,
                                 coap_queue_t **matched);
+
+/* Handle a duplicate before committing a protected response. */
+int coap_runtime_response_duplicate(coap_session_t *session, coap_pdu_t *pdu);
 
 int coap_option_check_critical(coap_session_t *session,
                                coap_pdu_t *pdu,

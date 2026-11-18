@@ -3726,10 +3726,24 @@ fail_response:
 }
 #endif /* COAP_SERVER_SUPPORT */
 
+int
+coap_runtime_response_duplicate(coap_session_t *session, coap_pdu_t *pdu) {
+  if (!COAP_PROTO_NOT_RELIABLE(session->proto))
+    return 0;
+  if (pdu->type == COAP_MESSAGE_CON && pdu->mid == session->last_con_mid) {
+    if (session->last_con_handler_res == COAP_RESPONSE_OK)
+      coap_send_ack_lkd(session, pdu);
+    else
+      coap_send_rst_lkd(session, pdu);
+    return 1;
+  }
+  return pdu->type == COAP_MESSAGE_ACK && pdu->mid == session->last_ack_mid;
+}
+
 #if COAP_CLIENT_SUPPORT
 static void
 handle_response(coap_context_t *context, coap_session_t *session,
-                coap_pdu_t *sent, coap_pdu_t *rcvd) {
+                coap_pdu_t *sent, coap_pdu_t *rcvd, int admitted) {
 
   /* Set in case there is a later call to coap_update_token() */
   rcvd->session = session;
@@ -3743,23 +3757,12 @@ handle_response(coap_context_t *context, coap_session_t *session,
 
   /* Check for message duplication */
   if (COAP_PROTO_NOT_RELIABLE(session->proto)) {
-    if (rcvd->type == COAP_MESSAGE_CON) {
-      if (rcvd->mid == session->last_con_mid) {
-        /* Duplicate response: send ACK/RST, but don't process */
-        if (session->last_con_handler_res == COAP_RESPONSE_OK)
-          coap_send_ack_lkd(session, rcvd);
-        else
-          coap_send_rst_lkd(session, rcvd);
-        return;
-      }
+    if (!admitted && coap_runtime_response_duplicate(session, rcvd))
+      return;
+    if (rcvd->type == COAP_MESSAGE_CON)
       session->last_con_mid = rcvd->mid;
-    } else if (rcvd->type == COAP_MESSAGE_ACK) {
-      if (rcvd->mid == session->last_ack_mid) {
-        /* Duplicate response */
-        return;
-      }
+    else if (rcvd->type == COAP_MESSAGE_ACK)
       session->last_ack_mid = rcvd->mid;
-    }
   }
   /* Check to see if checking out extended token support */
   if (session->max_token_checked == COAP_EXT_T_CHECKING &&
@@ -3989,7 +3992,7 @@ check_token_size(coap_session_t *session, const coap_pdu_t *pdu) {
 }
 
 int
-coap_runtime_admit_datagram(coap_session_t *session, coap_pdu_t *pdu,
+coap_runtime_admit_input(coap_session_t *session, coap_pdu_t *pdu,
                             coap_queue_t **matched) {
   coap_opt_filter_t unknown;
   coap_queue_t *q;
@@ -4014,11 +4017,11 @@ coap_runtime_admit_datagram(coap_session_t *session, coap_pdu_t *pdu,
       coap_handle_event_lkd(session->context, COAP_EVENT_BAD_PACKET, session);
       return 0;
     }
-    if (!check_token_size(session, pdu))
+    if (COAP_PROTO_NOT_RELIABLE(session->proto) && !check_token_size(session, pdu))
       return 0;
   }
 
-  if (pdu->type == COAP_MESSAGE_ACK) {
+  if (COAP_PROTO_NOT_RELIABLE(session->proto) && pdu->type == COAP_MESSAGE_ACK) {
     /* The supplied unicast read already selected this session's peer.
      * The multicast solicitation cannot have a queued CON. */
     const coap_bin_const_t *token =
@@ -4114,7 +4117,9 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
 
   if (coap_check_option(pdu, COAP_OPTION_OSCORE, &opt_iter) != NULL) {
     int decrypt = 1;
-    int admit_inner = runtime_datagram && COAP_PDU_IS_RESPONSE(pdu);
+    int admit_inner = context->runtime_replay &&
+                      session->type == COAP_SESSION_TYPE_CLIENT &&
+                      COAP_PDU_IS_RESPONSE(pdu);
 #if COAP_SERVER_SUPPORT
     coap_opt_t *opt;
     coap_resource_t *resource;
@@ -4167,7 +4172,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
         return;
       } else {
         if (context->runtime_replay &&
-            (!admit_inner || pdu->type != COAP_MESSAGE_ACK))
+            (!admit_inner || (runtime_datagram && pdu->type != COAP_MESSAGE_ACK)))
           coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
         session->oscore_encryption = 1;
         pdu = dec_pdu;
@@ -4180,7 +4185,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
 #endif /* COAP_OSCORE_SUPPORT */
 
   if (runtime_datagram && !native_admitted &&
-      !coap_runtime_admit_datagram(session, pdu, &matched))
+      !coap_runtime_admit_input(session, pdu, &matched))
     goto cleanup;
 
   switch (pdu->type) {
@@ -4398,7 +4403,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
     break;
 
   case COAP_MESSAGE_CON:        /* check for unknown critical options */
-    if ((!runtime_datagram || !COAP_PDU_IS_RESPONSE(pdu)) &&
+    if (!native_admitted && (!runtime_datagram || !COAP_PDU_IS_RESPONSE(pdu)) &&
         !COAP_PDU_IS_SIGNALING(pdu) &&
         coap_option_check_critical(session, pdu, &opt_filter) == 0) {
       packet_is_bad = 1;
@@ -4417,7 +4422,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
       }
       goto cleanup;
     }
-    if ((!runtime_datagram || !COAP_PDU_IS_RESPONSE(pdu)) &&
+    if (!native_admitted && (!runtime_datagram || !COAP_PDU_IS_RESPONSE(pdu)) &&
         !check_token_size(session, pdu)) {
       goto cleanup;
     }
@@ -4444,7 +4449,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
 #endif /* COAP_SERVER_SUPPORT */
 #if COAP_CLIENT_SUPPORT
       if (COAP_PDU_IS_RESPONSE(pdu))
-        handle_response(context, session, sent ? sent->pdu : NULL, pdu);
+        handle_response(context, session, sent ? sent->pdu : NULL, pdu, native_admitted);
       else
 #endif /* COAP_CLIENT_SUPPORT */
       {

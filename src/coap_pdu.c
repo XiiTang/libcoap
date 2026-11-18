@@ -51,6 +51,9 @@ coap_pdu_clear(coap_pdu_t *pdu, size_t size) {
   pdu->hdr_size = 0;
   pdu->actual_token.length = 0;
   pdu->e_token_length = 0;
+  pdu->runtime_observe_ordered = 0;
+  pdu->runtime_echo_final = 0;
+  pdu->runtime_echo_app_token = NULL;
   pdu->crit_opt = 0;
   pdu->mid = 0;
   pdu->max_opt = 0;
@@ -198,6 +201,7 @@ coap_delete_pdu_lkd(coap_pdu_t *pdu) {
       coap_free_type(COAP_PDU_BUF, pdu->token - pdu->max_hdr_size);
 #endif
     coap_delete_binary(pdu->data_free);
+    coap_delete_bin_const(pdu->runtime_echo_app_token);
     coap_free_type(COAP_PDU, pdu);
   }
 }
@@ -338,6 +342,11 @@ coap_pdu_resize(coap_pdu_t *pdu, size_t new_size) {
 size_t
 coap_pdu_runtime_used_size(const coap_pdu_t *pdu) {
   return pdu->used_size;
+}
+
+int
+coap_pdu_runtime_observe_ordered(const coap_pdu_t *pdu) {
+  return pdu->runtime_observe_ordered != 0;
 }
 
 int
@@ -1620,6 +1629,8 @@ coap_pdu_set_type(coap_pdu_t *pdu, coap_pdu_type_t type) {
 
 coap_bin_const_t
 coap_pdu_get_token(const coap_pdu_t *pdu) {
+  if (pdu->runtime_echo_app_token)
+    return *pdu->runtime_echo_app_token;
   return pdu->actual_token;
 }
 

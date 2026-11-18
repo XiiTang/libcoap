@@ -246,6 +246,9 @@ coap_lg_crcv_t *coap_block_new_lg_crcv(coap_session_t *session,
 void coap_block_delete_lg_crcv(coap_session_t *session,
                                coap_lg_crcv_t *lg_crcv);
 
+#ifdef COAP_RUNTIME_TEST
+void coap_session_test_expire_block_state(coap_session_t *session);
+#endif /* COAP_RUNTIME_TEST */
 int coap_block_check_lg_crcv_timeouts(coap_session_t *session,
                                       coap_tick_t now,
                                       coap_tick_t *tim_rem);
@@ -399,6 +402,8 @@ int coap_handle_response_get_block(coap_context_t *context,
                                    coap_pdu_t *sent,
                                    coap_pdu_t *rcvd,
                                    coap_recurse_t recursive);
+coap_pdu_t *coap_prepare_runtime_oscore_retry(coap_session_t *session,
+                                               coap_pdu_t *pdu, coap_opt_t *echo);
 coap_mid_t coap_retransmit_oscore_pdu(coap_session_t *session,
                                       coap_pdu_t *pdu,
                                       coap_opt_t *echo);
