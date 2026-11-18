@@ -1008,9 +1008,19 @@ coap_session_send_pdu(coap_session_t *session, coap_pdu_t *pdu) {
   return bytes_written;
 }
 
+#ifdef COAP_RUNTIME_TEST
+void
+coap_context_test_refuse_initial_con(coap_context_t *context) {
+  context->runtime_refuse_initial_con = 1;
+}
+#endif /* COAP_RUNTIME_TEST */
+
 static ssize_t
-coap_send_pdu(coap_session_t *session, coap_pdu_t *pdu, coap_queue_t *node) {
+coap_send_pdu(coap_session_t *session, coap_pdu_t *pdu, coap_queue_t *node,
+              coap_queue_t **initial_con) {
   ssize_t bytes_written;
+  int datagram_con = pdu->type == COAP_MESSAGE_CON &&
+                     COAP_PROTO_NOT_RELIABLE(session->proto);
 
   if (session->state == COAP_SESSION_STATE_NONE) {
 #if ! COAP_CLIENT_SUPPORT
@@ -1039,9 +1049,28 @@ coap_send_pdu(coap_session_t *session, coap_pdu_t *pdu, coap_queue_t *node) {
       (session->sock.flags & COAP_SOCKET_WANT_WRITE))
     return coap_session_delay_pdu(session, pdu, node);
 
+  /* A direct initial CON needs an owner before writing. The delay path
+   * allocates or moves its own node, and retransmission already has one. */
+  if (initial_con && datagram_con) {
+    uint8_t r;
+
+#ifdef COAP_RUNTIME_TEST
+    if (session->context->runtime_refuse_initial_con) {
+      session->context->runtime_refuse_initial_con = 0;
+      return -1;
+    }
+#endif /* COAP_RUNTIME_TEST */
+    *initial_con = coap_new_node();
+    if (!*initial_con)
+      return -1;
+    (*initial_con)->id = pdu->mid;
+    (*initial_con)->pdu = pdu;
+    coap_prng_lkd(&r, sizeof(r));
+    (*initial_con)->timeout = coap_calc_timeout(session, r);
+  }
+
   bytes_written = coap_session_send_pdu(session, pdu);
-  if (bytes_written >= 0 && pdu->type == COAP_MESSAGE_CON &&
-      COAP_PROTO_NOT_RELIABLE(session->proto))
+  if (bytes_written >= 0 && datagram_con)
     session->con_active++;
 
   return bytes_written;
@@ -1679,7 +1708,7 @@ error:
 
 coap_mid_t
 coap_send_internal(coap_session_t *session, coap_pdu_t *pdu) {
-  uint8_t r;
+  coap_queue_t *initial_con = NULL;
   ssize_t bytes_written;
   coap_opt_iterator_t opt_iter;
 
@@ -1857,12 +1886,11 @@ coap_send_internal(coap_session_t *session, coap_pdu_t *pdu) {
       coap_log_warn("OSCORE: PDU could not be encrypted\n");
       goto error;
     }
-    bytes_written = coap_send_pdu(session, osc_pdu, NULL);
     coap_delete_pdu_lkd(pdu);
     pdu = osc_pdu;
-  } else
+  }
 #endif /* COAP_OSCORE_SUPPORT */
-    bytes_written = coap_send_pdu(session, pdu, NULL);
+  bytes_written = coap_send_pdu(session, pdu, NULL, &initial_con);
 
   if (bytes_written == COAP_PDU_DELAYED) {
     /* do not free pdu as it is stored with session for later use */
@@ -1885,27 +1913,18 @@ coap_send_internal(coap_session_t *session, coap_pdu_t *pdu) {
   }
 #endif /* !COAP_DISABLE_TCP */
 
-  if (pdu->type != COAP_MESSAGE_CON
-      || COAP_PROTO_RELIABLE(session->proto)) {
-    coap_mid_t id = pdu->mid;
-    coap_delete_pdu_lkd(pdu);
-    return id;
-  }
+  if (initial_con)
+    return coap_wait_ack(session->context, session, initial_con);
 
-  coap_queue_t *node = coap_new_node();
-  if (!node) {
-    coap_log_debug("coap_wait_ack: insufficient memory\n");
-    goto error;
-  }
-
-  node->id = pdu->mid;
-  node->pdu = pdu;
-  coap_prng_lkd(&r, sizeof(r));
-  /* add timeout in range [ACK_TIMEOUT...ACK_TIMEOUT * ACK_RANDOM_FACTOR] */
-  node->timeout = coap_calc_timeout(session, r);
-  return coap_wait_ack(session->context, session, node);
-error:
+  coap_mid_t id = pdu->mid;
   coap_delete_pdu_lkd(pdu);
+  return id;
+
+error:
+  if (initial_con)
+    coap_delete_node_lkd(initial_con);
+  else
+    coap_delete_pdu_lkd(pdu);
   return COAP_INVALID_MID;
 }
 
@@ -1955,7 +1974,7 @@ coap_retransmit(coap_context_t *context, coap_queue_t *node) {
 
     if (node->session->con_active)
       node->session->con_active--;
-    bytes_written = coap_send_pdu(node->session, node->pdu, node);
+    bytes_written = coap_send_pdu(node->session, node->pdu, node, NULL);
 
     if (node->is_mcast) {
       coap_session_connected(node->session);

@@ -326,3 +326,18 @@ Boundless #863. The native test
 native block processing. The Boundless regression
 `invalid_datagram_replies_leave_the_con_for_its_genuine_answer` checks
 malformed ACK, Reset, CON and NON, then the genuine answer and a sibling.
+
+## Initial CON acquires its retransmission holder before the write
+
+Upstream v4.3.5b writes and consumes NSTART credit before allocating the
+node for an initial direct datagram CON. Allocation failure returns an
+invalid MID and leaves no queued owner for that credit. Prepare the node
+and timer after the existing delay checks, before the write. On acceptance,
+install the same node. A failed write frees it and its PDU with no credit.
+The delay path still allocates or moves its own node, and retransmission
+retains the original node. The direct entry also serves the encrypted PDU.
+
+The opt-in test build can refuse the next initial direct CON allocation
+on one context. Boundless's `initial_con_without_a_holder_sends_nothing`
+checks the Program's send error, absence of the refused request on the wire
+and the next CON's successful response with no other packet to free credit.

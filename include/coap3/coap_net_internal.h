@@ -55,6 +55,9 @@ struct coap_context_t {
   coap_runtime_replay_t runtime_replay;
   coap_runtime_received_t runtime_received;
   size_t runtime_maximum_pdu;
+#ifdef COAP_RUNTIME_TEST
+  int runtime_refuse_initial_con;
+#endif /* COAP_RUNTIME_TEST */
   coap_opt_filter_t known_options;
 #if COAP_SERVER_SUPPORT
   coap_resource_t *resources; /**< hash table or list of known
@@ -401,6 +404,10 @@ void coap_dispatch(coap_context_t *context, coap_session_t *session,
  *
  * @return         @c 1 if everything was ok, @c 0 otherwise.
  */
+#ifdef COAP_RUNTIME_TEST
+void coap_context_test_refuse_initial_con(coap_context_t *context);
+#endif /* COAP_RUNTIME_TEST */
+
 /* The supplied datagram client must admit input before detaching a CON. */
 int coap_runtime_admit_datagram(coap_session_t *session, coap_pdu_t *pdu,
                                 coap_queue_t **matched);
