@@ -58,6 +58,7 @@ struct coap_context_t {
 #ifdef COAP_RUNTIME_TEST
   int runtime_refuse_initial_con;
   int runtime_refuse_close_notice;
+  int runtime_refuse_oscore_snapshot_payload;
 #endif /* COAP_RUNTIME_TEST */
   coap_opt_filter_t known_options;
 #if COAP_SERVER_SUPPORT
@@ -408,6 +409,7 @@ void coap_dispatch(coap_context_t *context, coap_session_t *session,
 #ifdef COAP_RUNTIME_TEST
 void coap_context_test_refuse_initial_con(coap_context_t *context);
 void coap_context_test_refuse_close_notice(coap_context_t *context);
+void coap_context_test_refuse_oscore_snapshot_payload(coap_context_t *context);
 #endif /* COAP_RUNTIME_TEST */
 
 /* Validate supplied client input before any exchange or OSCORE state change. */

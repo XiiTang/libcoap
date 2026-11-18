@@ -686,6 +686,13 @@ oscore_free_association(oscore_association_t *association) {
   }
 }
 
+#ifdef COAP_RUNTIME_TEST
+void
+coap_context_test_refuse_oscore_snapshot_payload(coap_context_t *context) {
+  context->runtime_refuse_oscore_snapshot_payload = 1;
+}
+#endif /* COAP_RUNTIME_TEST */
+
 int
 oscore_new_association(coap_session_t *session,
                        coap_pdu_t *sent_pdu,
@@ -708,9 +715,13 @@ oscore_new_association(coap_session_t *session,
   if (sent_pdu) {
     size_t size;
     const uint8_t *data;
+    int runtime_echo = 0;
+
 #if COAP_CLIENT_SUPPORT
-    if (session->type == COAP_SESSION_TYPE_CLIENT && session->context->runtime_replay &&
-        (session->block_mode & COAP_BLOCK_USE_LIBCOAP)) {
+    runtime_echo = session->type == COAP_SESSION_TYPE_CLIENT &&
+                   session->context->runtime_replay &&
+                   (session->block_mode & COAP_BLOCK_USE_LIBCOAP);
+    if (runtime_echo) {
       const coap_bin_const_t *app = coap_block_app_token(session, sent_pdu);
 
       if (app) {
@@ -726,7 +737,21 @@ oscore_new_association(coap_session_t *session,
     if (association->sent_pdu == NULL)
       goto error;
     if (coap_get_data(sent_pdu, &size, &data)) {
-      coap_add_data(association->sent_pdu, size, data);
+      int copied;
+
+#ifdef COAP_RUNTIME_TEST
+      if (runtime_echo && session->context->runtime_refuse_oscore_snapshot_payload) {
+        session->context->runtime_refuse_oscore_snapshot_payload = 0;
+        copied = 0;
+      } else
+#endif /* COAP_RUNTIME_TEST */
+        copied = coap_add_data(association->sent_pdu, size, data);
+      if (!copied && runtime_echo) {
+        /* Keep the security association for the original send. The Echo
+         * path may retry from a complete snapshot only. */
+        coap_delete_pdu_lkd(association->sent_pdu);
+        association->sent_pdu = NULL;
+      }
     }
   }
   association->token = coap_new_bin_const(token->s, token->length);

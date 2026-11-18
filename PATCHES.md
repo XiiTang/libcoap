@@ -360,7 +360,11 @@ response callback and the existing forget batch can still find its owner
 after block expiry. A prepared retry's send refusal reports the original
 request's native send failure. A consumed challenge counts against its old nonce only. The retry’s
 new nonce has its own response slot, including on a reused wire token. Prepare a continuation's exact saved chunk,
-since the receive template may hold the upload's first block.
+since the receive template may hold the upload's first block. Upstream
+ignores the payload-copy result when saving that PDU. An incomplete copy
+is discarded for the controlled block client, while the security
+association and the original send stay valid. A later admitted Echo
+challenge delivers 4.01 through the existing unavailable-retry path.
 Keep the ordinary OSCORE and Appendix B.2 paths.
 
 Boundless's `independent_oscore_inner_admission_order_and_echo_disposition`
@@ -371,6 +375,9 @@ The test-only expiry hook runs the real native sweeps.
 Boundless's `independent_oscore_block1_echo_and_inner_option_format`
 checks the peer's exact reassembled upload and nonce-bound retry answer,
 and keeps a live Block2 body and observation usable after malformed options.
+`independent_oscore_echo_answers_when_snapshot_payload_copy_fails` injects
+the copy refusal on a live continuation and verifies its full payload at
+the peer, delivery of the peer's 4.01 and no retry on the wire.
 
 ## Controlled close notices hand off before native release (#795)
 
