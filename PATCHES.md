@@ -364,3 +364,19 @@ covers authenticated malformed ACK, absent initial IV, stale and
 malformed terminal responses, native receive-state expiry, the aliased
 Block1 answer after both block records expire, and retry send refusal.
 The test-only expiry hook runs the real native sweeps.
+
+## Controlled close notices hand off before native release (#795)
+
+Upstream v4.3.5b sends Observe cancellations during session destruction
+through ordinary native output admission. A reliable notice can go to the
+delay queue when WANT_WRITE was already set, then disappear when that same
+destructor frees the queue. The controlled explicit pre-release step reuses
+the bodyless notice builder, refuses a partial native stream frame, and
+requires a full supplied write. It leaves wholly unwritten ordinary frames
+for disposal and suppresses duplicate notices in the destructor. Native
+DTLS shutdown output stays with the ordinary release callback.
+
+Boundless's `disconnect_hands_off_the_notice_after_admitted_frames`
+drives a previously deferred native frame and verifies ordered handoff.
+`disconnect_bounds_native_notice_behind_a_blocked_tcp_write` exercises
+the same attempt with the caller's cancellation and earlier deadline.

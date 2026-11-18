@@ -67,6 +67,8 @@ typedef int (*coap_runtime_replay_t)(void *, const uint8_t *, size_t, uint64_t, 
 /* Forget every listed request's native state in one call; 0 refuses it. */
 int coap_session_forget_runtime_tokens(coap_session_t *, const coap_bin_const_t *, size_t);
 void coap_session_set_runtime_peer(coap_session_t *, const coap_address_t *);
+/* Hand off each controlled close notice once. Session disposal still follows. */
+int coap_session_runtime_close_notices(coap_session_t *session);
 int coap_context_set_runtime_io(coap_context_t *, void *, coap_runtime_read_t,
                                coap_runtime_write_t, size_t maximum_pdu);
 void coap_context_set_runtime_verify(coap_context_t *, coap_runtime_verify_t);

@@ -1706,8 +1706,8 @@ error:
   return COAP_INVALID_MID;
 }
 
-coap_mid_t
-coap_send_internal(coap_session_t *session, coap_pdu_t *pdu) {
+static coap_mid_t
+coap_send_internal_mode(coap_session_t *session, coap_pdu_t *pdu, int close_notice) {
   coap_queue_t *initial_con = NULL;
   ssize_t bytes_written;
   coap_opt_iterator_t opt_iter;
@@ -1890,7 +1890,17 @@ coap_send_internal(coap_session_t *session, coap_pdu_t *pdu) {
     pdu = osc_pdu;
   }
 #endif /* COAP_OSCORE_SUPPORT */
-  bytes_written = coap_send_pdu(session, pdu, NULL, &initial_con);
+  if (close_notice) {
+    if (session->state != COAP_SESSION_STATE_ESTABLISHED || session->partial_write)
+      goto error;
+    /* Ordinary deferred application frames lose admission at close. The
+     * selected notice enters the supplied output FIFO without joining them. */
+    bytes_written = coap_session_send_pdu(session, pdu);
+    if (bytes_written < 0 || (size_t)bytes_written != pdu->hdr_size + pdu->used_size)
+      goto error;
+  } else {
+    bytes_written = coap_send_pdu(session, pdu, NULL, &initial_con);
+  }
 
   if (bytes_written == COAP_PDU_DELAYED) {
     /* do not free pdu as it is stored with session for later use */
@@ -1926,6 +1936,16 @@ error:
   else
     coap_delete_pdu_lkd(pdu);
   return COAP_INVALID_MID;
+}
+
+coap_mid_t
+coap_send_internal(coap_session_t *session, coap_pdu_t *pdu) {
+  return coap_send_internal_mode(session, pdu, 0);
+}
+
+coap_mid_t
+coap_send_runtime_close_notice(coap_session_t *session, coap_pdu_t *pdu) {
+  return coap_send_internal_mode(session, pdu, 1);
 }
 
 coap_mid_t

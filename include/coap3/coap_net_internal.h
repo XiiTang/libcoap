@@ -475,6 +475,7 @@ int coap_check_code_class(coap_session_t *session, coap_pdu_t *pdu);
  *                  COAP_INVALID_MID on error.
  */
 coap_mid_t coap_send_internal(coap_session_t *session, coap_pdu_t *pdu);
+coap_mid_t coap_send_runtime_close_notice(coap_session_t *session, coap_pdu_t *pdu);
 
 /**
  * Delay the sending of the first client request until some other negotiation

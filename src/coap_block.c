@@ -454,48 +454,84 @@ coap_cancel_observe(coap_session_t *session, coap_binary_t *token,
  * registration token saved (the final Block1 block's for a large FETCH),
  * otherwise the token the upstream cancellation would start on.
  */
+static coap_pdu_t *
+runtime_observe_notice(coap_session_t *session, coap_lg_crcv_t *lg_crcv,
+                        coap_pdu_type_t type, int strict) {
+  uint8_t buf[8];
+  coap_opt_filter_t drop_options;
+  coap_pdu_t *pdu;
+  coap_bin_const_t *token = (coap_bin_const_t *)lg_crcv->app_token;
+
+  if (lg_crcv->obs_token) {
+    if (lg_crcv->obs_token_cnt && lg_crcv->obs_token[lg_crcv->obs_token_cnt - 1])
+      token = lg_crcv->obs_token[lg_crcv->obs_token_cnt - 1];
+    else if (lg_crcv->obs_token[0])
+      token = lg_crcv->obs_token[0];
+  }
+  coap_option_filter_clear(&drop_options);
+  coap_option_filter_set(&drop_options, COAP_OPTION_BLOCK1);
+  coap_option_filter_set(&drop_options, COAP_OPTION_SIZE1);
+#if COAP_Q_BLOCK_SUPPORT
+  coap_option_filter_set(&drop_options, COAP_OPTION_Q_BLOCK1);
+#endif /* COAP_Q_BLOCK_SUPPORT */
+  pdu = coap_pdu_duplicate_lkd(&lg_crcv->pdu, session, token->length,
+                               token->s, &drop_options);
+  lg_crcv->observe_set = 0;
+  if (!pdu)
+    return NULL;
+
+  pdu->type = type;
+  if (!coap_update_option(pdu, COAP_OPTION_OBSERVE,
+                           coap_encode_var_safe(buf, sizeof(buf),
+                                                COAP_OBSERVE_CANCEL), buf) && strict) {
+    coap_delete_pdu_lkd(pdu);
+    return NULL;
+  }
+  return pdu;
+}
+
 static int
 runtime_cancel_observe(coap_session_t *session, coap_binary_t *token,
                        coap_pdu_type_t type) {
   coap_lg_crcv_t *lg_crcv;
 
   LL_FOREACH(session->lg_crcv, lg_crcv) {
-    if (lg_crcv->observe_set) {
-      if ((!token && !lg_crcv->app_token->length) || (token &&
-                                                      coap_binary_equal(token, lg_crcv->app_token))) {
-        uint8_t buf[8];
-        coap_opt_filter_t drop_options;
-        coap_pdu_t *pdu;
-        coap_bin_const_t *otoken = (coap_bin_const_t *)lg_crcv->app_token;
-
-        if (lg_crcv->obs_token) {
-          if (lg_crcv->obs_token_cnt && lg_crcv->obs_token[lg_crcv->obs_token_cnt - 1])
-            otoken = lg_crcv->obs_token[lg_crcv->obs_token_cnt - 1];
-          else if (lg_crcv->obs_token[0])
-            otoken = lg_crcv->obs_token[0];
-        }
-        memset(&drop_options, 0, sizeof(coap_opt_filter_t));
-        coap_option_filter_set(&drop_options, COAP_OPTION_BLOCK1);
-        coap_option_filter_set(&drop_options, COAP_OPTION_SIZE1);
-#if COAP_Q_BLOCK_SUPPORT
-        coap_option_filter_set(&drop_options, COAP_OPTION_Q_BLOCK1);
-#endif /* COAP_Q_BLOCK_SUPPORT */
-        /* Options only: the duplicate carries no payload */
-        pdu = coap_pdu_duplicate_lkd(&lg_crcv->pdu, session, otoken->length,
-                                     otoken->s, &drop_options);
-        lg_crcv->observe_set = 0;
-        if (pdu == NULL)
-          return 0;
-        pdu->type = type;
-        coap_update_option(pdu, COAP_OPTION_OBSERVE,
-                           coap_encode_var_safe(buf, sizeof(buf),
-                                                COAP_OBSERVE_CANCEL),
-                           buf);
-        return coap_send_internal(session, pdu) != COAP_INVALID_MID;
-      }
+    if (lg_crcv->observe_set &&
+        ((!token && !lg_crcv->app_token->length) ||
+         (token && coap_binary_equal(token, lg_crcv->app_token)))) {
+      coap_pdu_t *pdu = runtime_observe_notice(session, lg_crcv, type, 0);
+      return pdu && coap_send_internal(session, pdu) != COAP_INVALID_MID;
     }
   }
   return 0;
+}
+
+int
+coap_session_runtime_close_notices(coap_session_t *session) {
+  coap_lg_crcv_t *lg_crcv;
+  int result = 1;
+
+  coap_lock_lock(session->context, return 0);
+  if (!session->context->runtime_write) {
+    result = 0;
+  } else if (!session->no_observe_cancel) {
+    session->no_observe_cancel = 1;
+    if (session->partial_write) {
+      result = -1;
+    } else {
+      LL_FOREACH(session->lg_crcv, lg_crcv) {
+        if (lg_crcv->observe_set) {
+          coap_pdu_t *notice = runtime_observe_notice(session, lg_crcv, COAP_MESSAGE_NON, 1);
+          if (!notice || coap_send_runtime_close_notice(session, notice) == COAP_INVALID_MID) {
+            result = 0;
+            break;
+          }
+        }
+      }
+    }
+  }
+  coap_lock_unlock(session->context);
+  return result;
 }
 
 int
