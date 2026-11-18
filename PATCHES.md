@@ -379,11 +379,17 @@ through ordinary native output admission. A reliable notice can go to the
 delay queue when WANT_WRITE was already set, then disappear when that same
 destructor frees the queue. The controlled explicit pre-release step reuses
 the bodyless notice builder, refuses a partial native stream frame, and
-requires a full supplied write. It leaves wholly unwritten ordinary frames
-for disposal and suppresses duplicate notices in the destructor. Native
+requires a full supplied write. Like the base destructor, it continues after
+an isolated builder refusal. It reports that refusal separately from a
+failed write or unusable stream, so the pump can drain accepted output.
+It leaves wholly unwritten ordinary frames for disposal and suppresses
+duplicate notices in the destructor. Native
 DTLS shutdown output stays with the ordinary release callback.
 
 Boundless's `disconnect_hands_off_the_notice_after_admitted_frames`
 drives a previously deferred native frame and verifies ordered handoff.
 `disconnect_bounds_native_notice_behind_a_blocked_tcp_write` exercises
 the same attempt with the caller's cancellation and earlier deadline.
+
+Boundless's `disconnect_drains_other_output_after_a_notice_build_refusal`
+checks the refusal, a second eligible notice and earlier accepted output.

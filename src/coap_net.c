@@ -1707,7 +1707,7 @@ error:
 }
 
 static coap_mid_t
-coap_send_internal_mode(coap_session_t *session, coap_pdu_t *pdu, int close_notice) {
+coap_send_internal_mode(coap_session_t *session, coap_pdu_t *pdu, int *close_output_failed) {
   coap_queue_t *initial_con = NULL;
   ssize_t bytes_written;
   coap_opt_iterator_t opt_iter;
@@ -1890,14 +1890,18 @@ coap_send_internal_mode(coap_session_t *session, coap_pdu_t *pdu, int close_noti
     pdu = osc_pdu;
   }
 #endif /* COAP_OSCORE_SUPPORT */
-  if (close_notice) {
-    if (session->state != COAP_SESSION_STATE_ESTABLISHED || session->partial_write)
+  if (close_output_failed) {
+    if (session->state != COAP_SESSION_STATE_ESTABLISHED || session->partial_write) {
+      *close_output_failed = 1;
       goto error;
+    }
     /* Ordinary deferred application frames lose admission at close. The
      * selected notice enters the supplied output FIFO without joining them. */
     bytes_written = coap_session_send_pdu(session, pdu);
-    if (bytes_written < 0 || (size_t)bytes_written != pdu->hdr_size + pdu->used_size)
+    if (bytes_written < 0 || (size_t)bytes_written != pdu->hdr_size + pdu->used_size) {
+      *close_output_failed = 1;
       goto error;
+    }
   } else {
     bytes_written = coap_send_pdu(session, pdu, NULL, &initial_con);
   }
@@ -1940,12 +1944,13 @@ error:
 
 coap_mid_t
 coap_send_internal(coap_session_t *session, coap_pdu_t *pdu) {
-  return coap_send_internal_mode(session, pdu, 0);
+  return coap_send_internal_mode(session, pdu, NULL);
 }
 
 coap_mid_t
-coap_send_runtime_close_notice(coap_session_t *session, coap_pdu_t *pdu) {
-  return coap_send_internal_mode(session, pdu, 1);
+coap_send_runtime_close_notice(coap_session_t *session, coap_pdu_t *pdu,
+                               int *output_failed) {
+  return coap_send_internal_mode(session, pdu, output_failed);
 }
 
 coap_mid_t

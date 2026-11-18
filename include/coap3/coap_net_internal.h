@@ -57,6 +57,7 @@ struct coap_context_t {
   size_t runtime_maximum_pdu;
 #ifdef COAP_RUNTIME_TEST
   int runtime_refuse_initial_con;
+  int runtime_refuse_close_notice;
 #endif /* COAP_RUNTIME_TEST */
   coap_opt_filter_t known_options;
 #if COAP_SERVER_SUPPORT
@@ -406,6 +407,7 @@ void coap_dispatch(coap_context_t *context, coap_session_t *session,
  */
 #ifdef COAP_RUNTIME_TEST
 void coap_context_test_refuse_initial_con(coap_context_t *context);
+void coap_context_test_refuse_close_notice(coap_context_t *context);
 #endif /* COAP_RUNTIME_TEST */
 
 /* Validate supplied client input before any exchange or OSCORE state change. */
@@ -475,7 +477,8 @@ int coap_check_code_class(coap_session_t *session, coap_pdu_t *pdu);
  *                  COAP_INVALID_MID on error.
  */
 coap_mid_t coap_send_internal(coap_session_t *session, coap_pdu_t *pdu);
-coap_mid_t coap_send_runtime_close_notice(coap_session_t *session, coap_pdu_t *pdu);
+coap_mid_t coap_send_runtime_close_notice(coap_session_t *session, coap_pdu_t *pdu,
+                                          int *output_failed);
 
 /**
  * Delay the sending of the first client request until some other negotiation

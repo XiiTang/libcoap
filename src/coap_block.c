@@ -474,9 +474,15 @@ runtime_observe_notice(coap_session_t *session, coap_lg_crcv_t *lg_crcv,
 #if COAP_Q_BLOCK_SUPPORT
   coap_option_filter_set(&drop_options, COAP_OPTION_Q_BLOCK1);
 #endif /* COAP_Q_BLOCK_SUPPORT */
+  lg_crcv->observe_set = 0;
+#ifdef COAP_RUNTIME_TEST
+  if (strict && session->context->runtime_refuse_close_notice) {
+    session->context->runtime_refuse_close_notice = 0;
+    return NULL;
+  }
+#endif /* COAP_RUNTIME_TEST */
   pdu = coap_pdu_duplicate_lkd(&lg_crcv->pdu, session, token->length,
                                token->s, &drop_options);
-  lg_crcv->observe_set = 0;
   if (!pdu)
     return NULL;
 
@@ -506,6 +512,13 @@ runtime_cancel_observe(coap_session_t *session, coap_binary_t *token,
   return 0;
 }
 
+#ifdef COAP_RUNTIME_TEST
+void
+coap_context_test_refuse_close_notice(coap_context_t *context) {
+  context->runtime_refuse_close_notice = 1;
+}
+#endif /* COAP_RUNTIME_TEST */
+
 int
 coap_session_runtime_close_notices(coap_session_t *session) {
   coap_lg_crcv_t *lg_crcv;
@@ -522,9 +535,15 @@ coap_session_runtime_close_notices(coap_session_t *session) {
       LL_FOREACH(session->lg_crcv, lg_crcv) {
         if (lg_crcv->observe_set) {
           coap_pdu_t *notice = runtime_observe_notice(session, lg_crcv, COAP_MESSAGE_NON, 1);
-          if (!notice || coap_send_runtime_close_notice(session, notice) == COAP_INVALID_MID) {
-            result = 0;
-            break;
+          int output_failed = 0;
+
+          if (!notice ||
+              coap_send_runtime_close_notice(session, notice, &output_failed) == COAP_INVALID_MID) {
+            if (output_failed) {
+              result = 0;
+              break;
+            }
+            result = 2;
           }
         }
       }
