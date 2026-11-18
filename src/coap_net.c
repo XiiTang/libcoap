@@ -3965,6 +3965,19 @@ check_token_size(coap_session_t *session, const coap_pdu_t *pdu) {
   return 1;
 }
 
+/* Dispatch has already detached this node, so token-wide cancellation
+ * cannot release its credit. */
+static void
+coap_discharge_received_con(coap_session_t *session, const coap_queue_t *sent) {
+  if (!sent || !COAP_PROTO_NOT_RELIABLE(session->proto) ||
+      sent->pdu->type != COAP_MESSAGE_CON || !session->con_active)
+    return;
+
+  session->con_active--;
+  if (session->state == COAP_SESSION_STATE_ESTABLISHED)
+    coap_session_connected(session);
+}
+
 void
 coap_dispatch(coap_context_t *context, coap_session_t *session,
               coap_pdu_t *pdu) {
@@ -4094,12 +4107,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
                              pdu->code == 0 ? NULL : &pdu->actual_token, &sent);
     }
 
-    if (sent && session->con_active) {
-      session->con_active--;
-      if (session->state == COAP_SESSION_STATE_ESTABLISHED)
-        /* Flush out any entries on session->delayqueue */
-        coap_session_connected(session);
-    }
+    coap_discharge_received_con(session, sent);
     if (coap_option_check_critical(session, pdu, &opt_filter) == 0) {
       packet_is_bad = 1;
       goto cleanup;
@@ -4234,12 +4242,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
      * Only a removed CON was counted in con_active: a Reset to a NON (which
      * is never queued) must not free another request's NSTART slot.
      */
-    if (sent && session->con_active) {
-      session->con_active--;
-      if (session->state == COAP_SESSION_STATE_ESTABLISHED)
-        /* Flush out any entries on session->delayqueue */
-        coap_session_connected(session);
-    }
+    coap_discharge_received_con(session, sent);
 
     if (sent) {
       coap_cancel(context, sent);
@@ -4289,8 +4292,9 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
   }
 
   case COAP_MESSAGE_NON:
-    /* find transaction in sendqueue in case large response */
-    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
+    /* Preserve a node already detached during OSCORE dispatch. */
+    if (!sent)
+      coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
     /* check for unknown critical options */
     if (coap_option_check_critical(session, pdu, &opt_filter) == 0) {
       packet_is_bad = 1;
@@ -4300,6 +4304,8 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
     if (!check_token_size(session, pdu)) {
       goto cleanup;
     }
+    if (COAP_PDU_IS_RESPONSE(pdu))
+      coap_discharge_received_con(session, sent);
     break;
 
   case COAP_MESSAGE_CON:        /* check for unknown critical options */
@@ -4324,6 +4330,10 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
     if (!check_token_size(session, pdu)) {
       goto cleanup;
     }
+#if COAP_OSCORE_SUPPORT
+    if (context->runtime_replay && COAP_PDU_IS_RESPONSE(pdu))
+      coap_discharge_received_con(session, sent);
+#endif /* COAP_OSCORE_SUPPORT */
     break;
   default:
     break;

@@ -291,3 +291,18 @@ asserts one bodyless notice only. Without the patch the two FETCH cases fail
 registration's notice equals upstream's but for the body. All pass with it on
 macOS arm64; the binding's full runtime-I/O suite (43 tests) and strict Clippy
 pass.
+
+## Discharge a CON detached by response dispatch
+
+Upstream v4.3.5b detaches a same-MID NON response's matching CON before
+the separate-response path can find it to release credit. Its ACK and Reset
+arms release credit directly. Release an actual detached datagram CON once
+through the receive-dispatch helper, leaving the unlink itself neutral.
+Preserve the detached node for callback correlation and the ordinary
+pre-authentication OSCORE path. The supplied runtime's admitted protected
+CON/NON paths can also arrive with an already detached node. Token-wide
+cancellation still owns nodes left in the queue.
+
+Boundless regression: `separate_non_releases_con_credit_for_the_next_send`
+drives same- and different-MID separate NON responses and a Block2
+continuation at NSTART=1, then completes a sibling request.
