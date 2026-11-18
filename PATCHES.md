@@ -349,14 +349,18 @@ changes association state before all inner message validation. Its Echo
 path cancels by token, then decrements CON credit again and consumes the
 challenge even when it cannot retry. For supplied clients, admit the
 authenticated inner response after durable replay and before association
-mutation. Keep the confirmed registration's full Partial IV watermark.
+mutation. Reuse the native PDU format parser on the authenticated inner bytes,
+including options that OSCORE rewrites during reconstruction. Keep the
+confirmed registration's full Partial IV watermark.
 Discharge only actual detached nodes. Prepare the block-mode Echo retry
 while the original dispatch is intact. If preparation cannot produce a
 retry, ordinary dispatch delivers the peer's 4.01. The controlled OSCORE
 association keeps the application token of a native Block1 alias so the
 response callback and the existing forget batch can still find its owner
 after block expiry. A prepared retry's send refusal reports the original
-request's native send failure.
+request's native send failure. A consumed challenge counts against its old nonce only. The retry’s
+new nonce has its own response slot, including on a reused wire token. Prepare a continuation's exact saved chunk,
+since the receive template may hold the upload's first block.
 Keep the ordinary OSCORE and Appendix B.2 paths.
 
 Boundless's `independent_oscore_inner_admission_order_and_echo_disposition`
@@ -364,6 +368,9 @@ covers authenticated malformed ACK, absent initial IV, stale and
 malformed terminal responses, native receive-state expiry, the aliased
 Block1 answer after both block records expire, and retry send refusal.
 The test-only expiry hook runs the real native sweeps.
+Boundless's `independent_oscore_block1_echo_and_inner_option_format`
+checks the peer's exact reassembled upload and nonce-bound retry answer,
+and keeps a live Block2 body and observation usable after malformed options.
 
 ## Controlled close notices hand off before native release (#795)
 

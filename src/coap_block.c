@@ -665,8 +665,8 @@ coap_prepare_oscore_retry(coap_session_t *session, coap_pdu_t *pdu,
                            coap_opt_value(echo));
       }
     }
-    if (coap_get_data(&lg_crcv->pdu, &data_len, &data)) {
-      if (coap_get_block_b(session, resend_pdu, COAP_OPTION_BLOCK1, &block)) {
+    if (coap_get_data(runtime ? pdu : &lg_crcv->pdu, &data_len, &data)) {
+      if (!runtime && coap_get_block_b(session, resend_pdu, COAP_OPTION_BLOCK1, &block)) {
         if (data_len > block.chunk_size && block.chunk_size != 0) {
           data_len = block.chunk_size;
         }

@@ -719,6 +719,8 @@ coap_oscore_new_pdu_encrypted_lkd(coap_session_t *session,
       if (association->partial_iv == NULL)
         goto error;
       association->recipient_ctx = rcp_ctx;
+      /* A fresh request nonce has its own response-without-Partial-IV slot. */
+      association->runtime_response_seen = 0;
       coap_delete_pdu_lkd(association->sent_pdu);
       if (session->b_2_step != COAP_OSCORE_B_2_NONE && !session->done_b_1_2) {
         size_t size;
@@ -1639,9 +1641,6 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
       goto error;
     }
   }
-  coap_delete_pdu_lkd(plain_pdu);
-  plain_pdu = NULL;
-
   /* Make sure headers are correctly set up */
   if (!coap_pdu_encode_header(decrypt_pdu, session->proto)) {
     if (!coap_request)
@@ -1689,7 +1688,12 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
     /* An authenticated input can be persisted even if message admission
      * refuses it. Do not roll back the persisted replay window. */
     runtime_snapshot = 0;
-    if (!COAP_PDU_IS_RESPONSE(decrypt_pdu)) {
+    /* Validate the authenticated bytes before accepting a reconstructed
+     * response. Plaintext uses the Code byte as a one-byte pseudo-token.
+     * In particular, check the original Observe option before replacing it
+     * with the low bytes of the Partial IV. */
+    plain_pdu->code = decrypt_pdu->code;
+    if (!COAP_PDU_IS_RESPONSE(decrypt_pdu) || !coap_pdu_parse_opt(plain_pdu)) {
       if (decrypt_pdu->type == COAP_MESSAGE_CON)
         coap_send_rst_lkd(session, decrypt_pdu);
       coap_handle_event_lkd(session->context, COAP_EVENT_BAD_PACKET, session);
@@ -1710,6 +1714,8 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
           coap_prepare_runtime_oscore_retry(session, sent_pdu, opt) : NULL;
 
       if (retry) {
+        /* A consumed challenge can still use the old nonce's response slot.
+         * A retry using this wire token refreshes it with its own nonce. */
         if (!got_resp_piv)
           association->runtime_response_seen = 1;
         /* Only the CONs actually removed by cancellation give up credit. */
@@ -1748,6 +1754,7 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
     association->runtime_response_seen = 1;
   if (association && association->is_observe == 0)
     oscore_delete_association(session, association);
+  coap_delete_pdu_lkd(plain_pdu);
   return decrypt_pdu;
 
 error:
