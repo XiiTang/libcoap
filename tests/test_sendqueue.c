@@ -355,6 +355,76 @@ t_sendqueue10(void) {
  * will exist for all tests and are modified by coap_insert_node()
  * and coap_remove_from_queue().
  */
+static ssize_t
+runtime_no_input(void *data COAP_UNUSED, uint8_t *buf COAP_UNUSED,
+                 size_t len COAP_UNUSED, coap_address_t *source COAP_UNUSED) {
+  return 0;
+}
+
+static unsigned int runtime_answers;
+
+static coap_response_t
+runtime_record_answer(coap_session_t *client COAP_UNUSED,
+                      const coap_pdu_t *sent, const coap_pdu_t *received,
+                      const coap_mid_t mid COAP_UNUSED) {
+  CU_ASSERT_PTR_NOT_NULL(sent);
+  CU_ASSERT(received->code == COAP_RESPONSE_CODE_CONTENT);
+  runtime_answers++;
+  return COAP_RESPONSE_OK;
+}
+
+static void
+t_runtime_raw_ack_requires_matching_con(void) {
+  coap_context_t *runtime = coap_new_context(NULL);
+  coap_session_t client = {0};
+  coap_queue_t *outstanding;
+  coap_pdu_t *ack;
+  uint8_t token = 0x51;
+  uint8_t more = 8;
+
+  CU_ASSERT_PTR_NOT_NULL_FATAL(runtime);
+  client.context = runtime;
+  client.proto = COAP_PROTO_UDP;
+  client.type = COAP_SESSION_TYPE_CLIENT;
+  client.state = COAP_SESSION_STATE_ESTABLISHED;
+  client.max_token_size = COAP_TOKEN_DEFAULT_MAX;
+  client.con_active = 1;
+  client.ref = 2; /* The queued node owns the other reference. */
+  runtime->runtime_read = runtime_no_input;
+  runtime->response_handler = runtime_record_answer;
+  runtime_answers = 0;
+
+  outstanding = coap_new_node();
+  CU_ASSERT_PTR_NOT_NULL_FATAL(outstanding);
+  outstanding->session = &client;
+  outstanding->id = 1;
+  outstanding->pdu = coap_pdu_init(COAP_MESSAGE_CON, COAP_REQUEST_CODE_GET, 1, 16);
+  CU_ASSERT_PTR_NOT_NULL_FATAL(outstanding->pdu);
+  CU_ASSERT_FATAL(coap_add_token(outstanding->pdu, 1, &token));
+  runtime->sendqueue = outstanding;
+
+  ack = coap_pdu_init(COAP_MESSAGE_ACK, COAP_RESPONSE_CODE_CONTENT, 2, 16);
+  CU_ASSERT_PTR_NOT_NULL_FATAL(ack);
+  CU_ASSERT_FATAL(coap_add_token(ack, 1, &token));
+  CU_ASSERT_FATAL(coap_add_option(ack, COAP_OPTION_BLOCK2, 1, &more));
+
+  coap_lock_lock(runtime, return);
+  coap_dispatch(runtime, &client, ack);
+  CU_ASSERT(runtime_answers == 0);
+  CU_ASSERT_PTR_EQUAL(runtime->sendqueue, outstanding);
+  CU_ASSERT(client.con_active == 1);
+
+  ack->mid = outstanding->id;
+  coap_dispatch(runtime, &client, ack);
+  CU_ASSERT(runtime_answers == 1);
+  CU_ASSERT_PTR_NULL(runtime->sendqueue);
+  CU_ASSERT(client.con_active == 0);
+  coap_lock_unlock(runtime);
+
+  coap_delete_pdu(ack);
+  coap_free_context(runtime);
+}
+
 static int
 t_sendqueue_tests_create(void) {
   size_t n, error = 0;
@@ -443,6 +513,7 @@ t_init_sendqueue_tests(void) {
   SENDQUEUE_TEST(suite, t_sendqueue9);
   SENDQUEUE_TEST(suite, t_sendqueue10);
   SENDQUEUE_TEST(suite, t_runtime_rst_classify);
+  SENDQUEUE_TEST(suite, t_runtime_raw_ack_requires_matching_con);
 
   return suite;
 }

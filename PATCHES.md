@@ -306,3 +306,23 @@ cancellation still owns nodes left in the queue.
 Boundless regression: `separate_non_releases_con_credit_for_the_next_send`
 drives same- and different-MID separate NON responses and a Block2
 continuation at NSTART=1, then completes a sibling request.
+
+## Admit supplied datagram ACKs and Resets before changing exchanges
+
+Upstream v4.3.5b can unlink an exchange before rejecting a request-code ACK
+or invalid-class datagram. It also permits a coded piggybacked ACK through
+dispatch when no queued CON matched. The supplied client checks the received
+type, code, options and applicable token size first. An ACK needs the
+session's peer and a queued CON with the same MID. A coded ACK also needs
+the same wire token. An empty ACK keeps its MID-only match. A Reset must
+be Empty, including at parse failure, before any Reset classification.
+An invalid CON can still receive a Reset, with no request-specific NACK.
+A separate response retains its token-based dispatch. The inner OSCORE
+datagram goes through the same checks before it can change its association.
+Ordinary libcoap dispatch keeps its upstream path.
+
+Boundless #863. The native test
+`t_runtime_raw_ack_requires_matching_con` exercises a Block2 ACK without
+native block processing. The Boundless regression
+`invalid_datagram_replies_leave_the_con_for_its_genuine_answer` checks
+malformed ACK, Reset, CON and NON, then the genuine answer and a sibling.

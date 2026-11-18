@@ -673,7 +673,7 @@ t_oscore_c_7(void) {
 
   /* First, decrypt incoming request to set up all variables for
      sending response */
-  osc_pdu = coap_oscore_decrypt_pdu(session, incoming_pdu);
+  osc_pdu = coap_oscore_decrypt_pdu(session, incoming_pdu, NULL);
   FailIf_CU_ASSERT_PTR_NOT_NULL(osc_pdu);
   result = coap_pdu_encode_header(osc_pdu, session->proto);
   CU_ASSERT(result != 0);
@@ -795,7 +795,7 @@ t_oscore_c_7_2(void) {
 
   /* Decrypt the encrypted response */
 
-  osc_pdu = coap_oscore_decrypt_pdu(session, incoming_pdu);
+  osc_pdu = coap_oscore_decrypt_pdu(session, incoming_pdu, NULL);
   FailIf_CU_ASSERT_PTR_NOT_NULL(osc_pdu);
 
   result = coap_pdu_encode_header(osc_pdu, session->proto);
@@ -885,7 +885,7 @@ t_oscore_c_8(void) {
 
   /* First, decrypt incoming request to set up all variables for
      sending response */
-  osc_pdu = coap_oscore_decrypt_pdu(session, incoming_pdu);
+  osc_pdu = coap_oscore_decrypt_pdu(session, incoming_pdu, NULL);
   FailIf_CU_ASSERT_PTR_NOT_NULL(osc_pdu);
   result = coap_pdu_encode_header(osc_pdu, session->proto);
   CU_ASSERT(result != 0);
@@ -1008,7 +1008,7 @@ t_oscore_c_8_2(void) {
 
   /* Decrypt the encrypted response */
 
-  osc_pdu = coap_oscore_decrypt_pdu(session, incoming_pdu);
+  osc_pdu = coap_oscore_decrypt_pdu(session, incoming_pdu, NULL);
   FailIf_CU_ASSERT_PTR_NOT_NULL(osc_pdu);
 
   result = coap_pdu_encode_header(osc_pdu, session->proto);

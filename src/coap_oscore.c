@@ -820,7 +820,7 @@ fail_resp:
  */
 coap_pdu_t *
 coap_oscore_decrypt_pdu(coap_session_t *session,
-                        coap_pdu_t *pdu) {
+                        coap_pdu_t *pdu, coap_queue_t **matched) {
   uint64_t runtime_seq = 0, runtime_window = 0;
   uint8_t runtime_initial = 0;
   int runtime_snapshot = 0;
@@ -1619,7 +1619,7 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
       break;
     }
   }
-  if (!coap_request && !doing_resp_observe) {
+  if (!matched && !coap_request && !doing_resp_observe) {
     if (association) {
       association->is_observe = 0;
     }
@@ -1649,6 +1649,13 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
                             COAP_EVENT_OSCORE_INTERNAL_ERROR,
                             session);
     goto error;
+  }
+
+  if (matched && !coap_request) {
+    if (!coap_runtime_admit_datagram(session, decrypt_pdu, matched))
+      goto error_no_ack;
+    if (!doing_resp_observe && association)
+      association->is_observe = 0;
   }
 
   if (session->b_2_step != COAP_OSCORE_B_2_NONE) {

@@ -2528,7 +2528,11 @@ error:
    * https://rfc-editor.org/rfc/rfc7252#section-4.2 MUST send RST
    * https://rfc-editor.org/rfc/rfc7252#section-4.3 MAY send RST
    */
-  coap_send_rst_lkd(session, pdu);
+  /* Even if the fields failed to parse, do not answer a supplied client's
+   * malformed ACK or RST with a Reset. The header version and size are valid. */
+  if (!ctx->runtime_read || session->type != COAP_SESSION_TYPE_CLIENT ||
+      ((msg[0] >> 4) & 0x03) < COAP_MESSAGE_ACK)
+    coap_send_rst_lkd(session, pdu);
   coap_delete_pdu_lkd(pdu);
   return -1;
 }
@@ -3965,6 +3969,53 @@ check_token_size(coap_session_t *session, const coap_pdu_t *pdu) {
   return 1;
 }
 
+int
+coap_runtime_admit_datagram(coap_session_t *session, coap_pdu_t *pdu,
+                            coap_queue_t **matched) {
+  coap_opt_filter_t unknown;
+  coap_queue_t *q;
+
+  if (!coap_check_code_class(session, pdu) ||
+      (pdu->type == COAP_MESSAGE_RST && !COAP_PDU_IS_EMPTY(pdu)) ||
+      (pdu->type == COAP_MESSAGE_ACK &&
+       !COAP_PDU_IS_EMPTY(pdu) && !COAP_PDU_IS_RESPONSE(pdu)) ||
+      ((pdu->type == COAP_MESSAGE_ACK || pdu->type == COAP_MESSAGE_RST) &&
+       COAP_PDU_IS_EMPTY(pdu) && (pdu->used_size || pdu->e_token_length))) {
+    if (pdu->type == COAP_MESSAGE_CON)
+      coap_send_rst_lkd(session, pdu);
+    coap_handle_event_lkd(session->context, COAP_EVENT_BAD_PACKET, session);
+    return 0;
+  }
+
+  if (COAP_PDU_IS_RESPONSE(pdu)) {
+    coap_option_filter_clear(&unknown);
+    if (!coap_option_check_critical(session, pdu, &unknown)) {
+      if (pdu->type == COAP_MESSAGE_CON || pdu->type == COAP_MESSAGE_NON)
+        coap_send_rst_lkd(session, pdu);
+      coap_handle_event_lkd(session->context, COAP_EVENT_BAD_PACKET, session);
+      return 0;
+    }
+    if (!check_token_size(session, pdu))
+      return 0;
+  }
+
+  if (pdu->type == COAP_MESSAGE_ACK) {
+    /* The supplied unicast read already selected this session's peer.
+     * The multicast solicitation cannot have a queued CON. */
+    const coap_bin_const_t *token =
+        COAP_PDU_IS_EMPTY(pdu) ? NULL : &pdu->actual_token;
+    LL_FOREACH(session->context->sendqueue, q) {
+      if (coap_queue_entry_matches(q, session, pdu->mid, token)) {
+        if (q->pdu->type == COAP_MESSAGE_CON)
+          *matched = q;
+        break;
+      }
+    }
+    return *matched != NULL;
+  }
+  return 1;
+}
+
 /* Dispatch has already detached this node, so token-wide cancellation
  * cannot release its credit. */
 static void
@@ -3987,6 +4038,11 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
   coap_opt_filter_t opt_filter;
   int is_ping_rst;
   int packet_is_bad = 0;
+  int runtime_datagram = context->runtime_read &&
+                         session->type == COAP_SESSION_TYPE_CLIENT &&
+                         COAP_PROTO_NOT_RELIABLE(session->proto);
+  int native_admitted = 0;
+  coap_queue_t *matched = NULL;
 #if COAP_OSCORE_SUPPORT
   coap_opt_iterator_t opt_iter;
   coap_pdu_t *dec_pdu = NULL;
@@ -4005,8 +4061,9 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
     if (pdu->type == COAP_MESSAGE_CON) {
       coap_send_message_type_lkd(session, pdu, COAP_MESSAGE_RST);
     }
-    /* find message id in sendqueue to stop retransmission */
-    coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
+    /* Invalid input must not claim a supplied client's exchange. */
+    if (!runtime_datagram)
+      coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
     goto cleanup;
   }
 
@@ -4038,6 +4095,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
 
   if (coap_check_option(pdu, COAP_OPTION_OSCORE, &opt_iter) != NULL) {
     int decrypt = 1;
+    int admit_inner = runtime_datagram && COAP_PDU_IS_RESPONSE(pdu);
 #if COAP_SERVER_SUPPORT
     coap_opt_t *opt;
     coap_resource_t *resource;
@@ -4079,7 +4137,8 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
       /* Bump ref so pdu is not freed of, and keep a pointer to it */
       orig_pdu = pdu;
       coap_pdu_reference_lkd(orig_pdu);
-      if ((dec_pdu = coap_oscore_decrypt_pdu(session, pdu)) == NULL) {
+      if ((dec_pdu = coap_oscore_decrypt_pdu(session, pdu,
+                                             admit_inner ? &matched : NULL)) == NULL) {
         if (session->recipient_ctx == NULL ||
             session->recipient_ctx->initial_state == 0) {
           coap_log_warn("OSCORE: PDU could not be decrypted\n");
@@ -4088,10 +4147,12 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
         coap_delete_pdu_lkd(orig_pdu);
         return;
       } else {
-        if (context->runtime_replay)
+        if (context->runtime_replay &&
+            (!admit_inner || pdu->type != COAP_MESSAGE_ACK))
           coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
         session->oscore_encryption = 1;
         pdu = dec_pdu;
+        native_admitted = admit_inner;
       }
       coap_log_debug("Decrypted PDU\n");
       coap_show_pdu(COAP_LOG_DEBUG, pdu);
@@ -4099,16 +4160,23 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
   }
 #endif /* COAP_OSCORE_SUPPORT */
 
+  if (runtime_datagram && !native_admitted &&
+      !coap_runtime_admit_datagram(session, pdu, &matched))
+    goto cleanup;
+
   switch (pdu->type) {
   case COAP_MESSAGE_ACK:
     if (NULL == sent) {
       /* find message id in sendqueue to stop retransmission */
       coap_remove_from_queue(&context->sendqueue, session, pdu->mid,
                              pdu->code == 0 ? NULL : &pdu->actual_token, &sent);
+      if (runtime_datagram && !sent)
+        goto cleanup;
     }
 
     coap_discharge_received_con(session, sent);
-    if (coap_option_check_critical(session, pdu, &opt_filter) == 0) {
+    if (!runtime_datagram &&
+        coap_option_check_critical(session, pdu, &opt_filter) == 0) {
       packet_is_bad = 1;
       goto cleanup;
     }
@@ -4293,15 +4361,17 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
 
   case COAP_MESSAGE_NON:
     /* Preserve a node already detached during OSCORE dispatch. */
-    if (!sent)
+    if (!sent && (!runtime_datagram || COAP_PDU_IS_RESPONSE(pdu)))
       coap_remove_from_queue(&context->sendqueue, session, pdu->mid, &pdu->actual_token, &sent);
-    /* check for unknown critical options */
-    if (coap_option_check_critical(session, pdu, &opt_filter) == 0) {
+    /* The supplied client has already admitted its responses. */
+    if ((!runtime_datagram || !COAP_PDU_IS_RESPONSE(pdu)) &&
+        coap_option_check_critical(session, pdu, &opt_filter) == 0) {
       packet_is_bad = 1;
       coap_send_rst_lkd(session, pdu);
       goto cleanup;
     }
-    if (!check_token_size(session, pdu)) {
+    if ((!runtime_datagram || !COAP_PDU_IS_RESPONSE(pdu)) &&
+        !check_token_size(session, pdu)) {
       goto cleanup;
     }
     if (COAP_PDU_IS_RESPONSE(pdu))
@@ -4309,7 +4379,8 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
     break;
 
   case COAP_MESSAGE_CON:        /* check for unknown critical options */
-    if (!COAP_PDU_IS_SIGNALING(pdu) &&
+    if ((!runtime_datagram || !COAP_PDU_IS_RESPONSE(pdu)) &&
+        !COAP_PDU_IS_SIGNALING(pdu) &&
         coap_option_check_critical(session, pdu, &opt_filter) == 0) {
       packet_is_bad = 1;
       if (COAP_PDU_IS_REQUEST(pdu)) {
@@ -4327,7 +4398,8 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
       }
       goto cleanup;
     }
-    if (!check_token_size(session, pdu)) {
+    if ((!runtime_datagram || !COAP_PDU_IS_RESPONSE(pdu)) &&
+        !check_token_size(session, pdu)) {
       goto cleanup;
     }
 #if COAP_OSCORE_SUPPORT

@@ -401,6 +401,10 @@ void coap_dispatch(coap_context_t *context, coap_session_t *session,
  *
  * @return         @c 1 if everything was ok, @c 0 otherwise.
  */
+/* The supplied datagram client must admit input before detaching a CON. */
+int coap_runtime_admit_datagram(coap_session_t *session, coap_pdu_t *pdu,
+                                coap_queue_t **matched);
+
 int coap_option_check_critical(coap_session_t *session,
                                coap_pdu_t *pdu,
                                coap_opt_filter_t *unknown);
