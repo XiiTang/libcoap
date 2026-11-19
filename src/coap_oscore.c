@@ -1700,11 +1700,14 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
       goto error_no_ack;
     }
     if (!coap_runtime_admit_input(session, decrypt_pdu, matched) ||
-        coap_runtime_response_duplicate(session, decrypt_pdu))
+        (!session->context->runtime_message_layer &&
+         coap_runtime_response_duplicate(session, decrypt_pdu)))
       goto error_no_ack;
     if (association->runtime_observe_confirmed &&
         (!got_resp_piv || sequence <= association->runtime_observe_sequence))
       goto error;
+    if (!coap_runtime_select_response(session, decrypt_pdu, 1))
+      goto error_no_ack;
 
 #if COAP_CLIENT_SUPPORT
     if ((session->block_mode & COAP_BLOCK_USE_LIBCOAP) &&

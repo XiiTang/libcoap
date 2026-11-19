@@ -445,6 +445,7 @@ coap_make_session(coap_proto_t proto, coap_session_type_t type,
 #endif /* COAP_SERVER_SUPPORT */
     session->mtu = COAP_DEFAULT_MTU;
   session->block_mode = context->block_mode;
+  session->runtime_csm_maximum = COAP_DEFAULT_MTU;
   if (proto == COAP_PROTO_DTLS) {
     session->tls_overhead = 29;
     if (session->tls_overhead >= session->mtu) {
@@ -630,6 +631,31 @@ coap_session_max_pdu_size_internal(const coap_session_t *session,
   else
     return max_with_header - 6;
 #endif /* !COAP_DISABLE_TCP */
+}
+
+int
+coap_session_runtime_capacity(coap_session_t *session,
+                              coap_runtime_capacity_t *capacity) {
+  size_t limit;
+
+  if (!session->context->runtime_message_layer ||
+      session->type != COAP_SESSION_TYPE_CLIENT ||
+      session->state != COAP_SESSION_STATE_ESTABLISHED)
+    return 0;
+
+  limit = COAP_PROTO_RELIABLE(session->proto)
+      ? session->runtime_csm_maximum : session->mtu - session->tls_overhead;
+  capacity->pdu_maximum = coap_session_max_pdu_size_internal(session, limit);
+  capacity->message_maximum = limit;
+  capacity->bert = COAP_PROTO_RELIABLE(session->proto) &&
+                   session->csm_bert_rem_support && session->csm_bert_loc_support;
+#if COAP_OSCORE_SUPPORT
+  capacity->needs_first_response = session->oscore_encryption &&
+      session->recipient_ctx && session->recipient_ctx->initial_state == 1;
+#else /* ! COAP_OSCORE_SUPPORT */
+  capacity->needs_first_response = 0;
+#endif /* ! COAP_OSCORE_SUPPORT */
+  return 1;
 }
 
 size_t

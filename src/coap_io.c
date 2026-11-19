@@ -1500,7 +1500,12 @@ release_1:
         s->csm_tx = now;
         s_timeout = (ctx->csm_timeout_ms * COAP_TICKS_PER_SECOND) / 1000;
       } else if (s->csm_tx + (ctx->csm_timeout_ms * COAP_TICKS_PER_SECOND) / 1000 <= now) {
-        /* timed out */
+        /* The application-owned sender does not call the blocking
+         * coap_client_delay_first() helper. Use its CSM fallback here. */
+        if (ctx->runtime_message_layer) {
+          s->csm_not_seen = 1;
+          coap_session_connected(s);
+        }
         s_timeout = 0;
       } else {
         s_timeout = (s->csm_tx + (ctx->csm_timeout_ms * COAP_TICKS_PER_SECOND) / 1000) - now;

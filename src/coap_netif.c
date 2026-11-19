@@ -29,6 +29,21 @@ coap_context_set_runtime_io(coap_context_t *ctx, void *data,
   ctx->runtime_maximum_pdu = maximum_pdu;
   return 1;
 }
+int
+coap_context_set_runtime_message_layer(coap_context_t *ctx) {
+  if (!ctx->runtime_read)
+    return 0;
+  coap_context_set_block_mode(ctx, 0);
+  ctx->runtime_message_layer = 1;
+  return 1;
+}
+
+void
+coap_context_set_runtime_admit_response(coap_context_t *ctx,
+                                        coap_runtime_admit_response_t admit) {
+  ctx->runtime_admit_response = admit;
+}
+
 void coap_context_set_runtime_received(coap_context_t *ctx, coap_runtime_received_t received) {
   ctx->runtime_received = received;
 }

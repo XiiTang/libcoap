@@ -1417,12 +1417,14 @@ coap_send_lkd(coap_session_t *session, coap_pdu_t *pdu) {
    * to the first client request, then drop sending out this next request
    * until all is properly established.
    */
-  if (!coap_client_delay_first(session)) {
+  if (!session->context->runtime_message_layer &&
+      !coap_client_delay_first(session)) {
     goto error;
   }
 
   /* Indicate support for Extended Tokens if appropriate */
-  if (session->max_token_checked == COAP_EXT_T_NOT_CHECKED &&
+  if (!session->context->runtime_message_layer &&
+      session->max_token_checked == COAP_EXT_T_NOT_CHECKED &&
       session->max_token_size > COAP_TOKEN_DEFAULT_MAX &&
       session->type == COAP_SESSION_TYPE_CLIENT &&
       COAP_PDU_IS_REQUEST(pdu)) {
@@ -1461,7 +1463,9 @@ coap_send_lkd(coap_session_t *session, coap_pdu_t *pdu) {
 
 #if COAP_OSCORE_SUPPORT
   if (session->oscore_encryption) {
-    if (session->recipient_ctx->initial_state == 1) {
+    /* The supplied message-layer owner holds its own first exchange. */
+    if (!session->context->runtime_message_layer &&
+        session->recipient_ctx->initial_state == 1) {
       /*
        * Not sure if remote supports OSCORE, or is going to send us a
        * "4.01 + ECHO" etc. so need to hold off future coap_send()s until all
@@ -3765,6 +3769,25 @@ coap_runtime_response_duplicate(coap_session_t *session, coap_pdu_t *pdu) {
   return pdu->type == COAP_MESSAGE_ACK && pdu->mid == session->last_ack_mid;
 }
 
+int
+coap_runtime_select_response(coap_session_t *session, coap_pdu_t *pdu,
+                             int protected_message) {
+  coap_context_t *context = session->context;
+  coap_runtime_response_admission_t admission;
+
+  if (!context->runtime_message_layer)
+    return 1;
+  if (!context->runtime_admit_response)
+    return 0;
+
+  coap_lock_callback_ret_release(admission, context,
+      context->runtime_admit_response(session, pdu, protected_message),
+      return 0);
+  if (admission == COAP_RUNTIME_RESPONSE_ACK)
+    coap_send_ack_lkd(session, pdu);
+  return admission == COAP_RUNTIME_RESPONSE_ACCEPT;
+}
+
 #if COAP_CLIENT_SUPPORT
 static void
 handle_response(coap_context_t *context, coap_session_t *session,
@@ -3782,7 +3805,8 @@ handle_response(coap_context_t *context, coap_session_t *session,
 
   /* Check for message duplication */
   if (COAP_PROTO_NOT_RELIABLE(session->proto)) {
-    if (!admitted && coap_runtime_response_duplicate(session, rcvd))
+    if (!context->runtime_message_layer &&
+        !admitted && coap_runtime_response_duplicate(session, rcvd))
       return;
     if (rcvd->type == COAP_MESSAGE_CON)
       session->last_con_mid = rcvd->mid;
@@ -3931,8 +3955,11 @@ handle_signaling(coap_context_t *context, coap_session_t *session,
     }
     while ((option = coap_option_next(&opt_iter))) {
       if (opt_iter.number == COAP_SIGNALING_OPTION_MAX_MESSAGE_SIZE) {
-        coap_session_set_mtu(session, coap_decode_var_bytes(coap_opt_value(option),
-                                                            coap_opt_length(option)));
+        uint32_t advertised = coap_decode_var_bytes(coap_opt_value(option),
+                                                     coap_opt_length(option));
+        coap_session_set_mtu(session, advertised);
+        if (session->context->runtime_message_layer)
+          session->runtime_csm_maximum = advertised;
         set_mtu = 1;
       } else if (opt_iter.number == COAP_SIGNALING_OPTION_BLOCK_WISE_TRANSFER) {
         session->csm_block_supported = 1;
@@ -3947,7 +3974,11 @@ handle_signaling(coap_context_t *context, coap_session_t *session,
         session->max_token_checked = COAP_EXT_T_CHECKED;
       }
     }
-    if (set_mtu) {
+    if (session->context->runtime_message_layer) {
+      /* BERT can be announced across two CSMs in either order. */
+      session->csm_bert_rem_support = session->runtime_csm_maximum > COAP_BERT_BASE &&
+                                      session->csm_block_supported;
+    } else if (set_mtu) {
       if (session->mtu > COAP_BERT_BASE && session->csm_block_supported)
         session->csm_bert_rem_support = 1;
       else
@@ -4209,9 +4240,23 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
   }
 #endif /* COAP_OSCORE_SUPPORT */
 
-  if (runtime_datagram && !native_admitted &&
+  if (!native_admitted &&
+      (runtime_datagram ||
+       (context->runtime_message_layer && COAP_PDU_IS_RESPONSE(pdu))) &&
       !coap_runtime_admit_input(session, pdu, &matched))
     goto cleanup;
+
+  if (context->runtime_message_layer && !native_admitted &&
+      COAP_PDU_IS_RESPONSE(pdu)) {
+#if COAP_OSCORE_SUPPORT
+    /* Outer cleartext cannot answer a protected request. Empty message
+     * controls followed the normal admission path above. */
+    if (session->oscore_encryption)
+      goto cleanup;
+#endif /* COAP_OSCORE_SUPPORT */
+    if (!coap_runtime_select_response(session, pdu, 0))
+      goto cleanup;
+  }
 
   switch (pdu->type) {
   case COAP_MESSAGE_ACK:
@@ -4277,6 +4322,7 @@ coap_dispatch(coap_context_t *context, coap_session_t *session,
        * options.
        */
       if (sent &&
+          !session->context->runtime_message_layer &&
           !coap_check_send_need_lg_crcv(session, sent->pdu) &&
           COAP_PDU_IS_REQUEST(sent->pdu)) {
         /*

@@ -55,6 +55,8 @@ struct coap_context_t {
   coap_runtime_replay_t runtime_replay;
   coap_runtime_received_t runtime_received;
   size_t runtime_maximum_pdu;
+  uint8_t runtime_message_layer;
+  coap_runtime_admit_response_t runtime_admit_response;
 #ifdef COAP_RUNTIME_TEST
   int runtime_refuse_initial_con;
   int runtime_refuse_close_notice;
@@ -418,6 +420,8 @@ int coap_runtime_admit_input(coap_session_t *session, coap_pdu_t *pdu,
 
 /* Handle a duplicate before committing a protected response. */
 int coap_runtime_response_duplicate(coap_session_t *session, coap_pdu_t *pdu);
+int coap_runtime_select_response(coap_session_t *session, coap_pdu_t *pdu,
+                                 int protected_message);
 
 int coap_option_check_critical(coap_session_t *session,
                                coap_pdu_t *pdu,

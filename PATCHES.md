@@ -400,3 +400,27 @@ the same attempt with the caller's cancellation and earlier deadline.
 
 Boundless's `disconnect_drains_other_output_after_a_notice_build_refusal`
 checks the refusal, a second eligible notice and earlier accepted output.
+
+## Application-owned blocks over supplied message I/O
+
+The regular controlled client uses libcoap's block mode. That mode can
+synthesize Block2 fetches itself and constructs a large receive record
+after an Empty ACK, even when the application should own the entire
+transfer. An opted-in supplied client keeps only the native message
+exchange. It uses a non-pumping capacity snapshot and performs the
+original CSM fallback from the I/O timer. CSM options accumulate in
+either order, including the peer maximum before the blockwise bit. The
+owner can use native optional Request-Tag insertion, preserving the two
+pinned insertion sites and the wrapping, minimal-width counter.
+
+The ordinary client dispatches valid messages to the application after
+its message and OSCORE association effects. In the opted-in client a
+response is selected after matching coded ACKs and, for OSCORE, after
+authentication, inner admission and the read-only sequence comparison.
+An ignored response leaves the queued message and association in place.
+Empty message controls still use native dispatch.
+
+Boundless regression: `supplied_message_layer_dispatches_only_an_admitted_block_head`
+checks that a wrong-MID piggybacked answer does not release NSTART, the
+genuine answer releases it once, and the raw response owns no automatic
+Block2 fetch.

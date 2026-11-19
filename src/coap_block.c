@@ -4630,6 +4630,28 @@ coap_check_update_token(coap_session_t *session, coap_pdu_t *pdu) {
 }
 #endif /* ! COAP_CLIENT_SUPPORT */
 #if COAP_CLIENT_SUPPORT
+int
+coap_session_runtime_tag(coap_session_t *session, coap_pdu_t *pdu, int upload) {
+  coap_opt_iterator_t iterator;
+  uint8_t encoded[4];
+  size_t size;
+  int result;
+
+  if (!session->context->runtime_message_layer || !COAP_PDU_IS_REQUEST(pdu))
+    return 0;
+  coap_lock_lock(session->context, return 0);
+  if (coap_check_option(pdu, COAP_OPTION_RTAG, &iterator)) {
+    result = 1;
+  } else if (upload || pdu->code != COAP_REQUEST_CODE_DELETE) {
+    size = coap_encode_var_safe(encoded, sizeof(encoded), ++session->tx_rtag);
+    result = coap_insert_option(pdu, COAP_OPTION_RTAG, size, encoded) != 0;
+  } else {
+    result = 0;
+  }
+  coap_lock_unlock(session->context);
+  return result;
+}
+
 /* Resolve a blockwise state's public token without modifying the wire PDU. */
 static int
 runtime_token_matches(coap_session_t *session, const coap_bin_const_t *wire,
@@ -4638,6 +4660,7 @@ runtime_token_matches(coap_session_t *session, const coap_bin_const_t *wire,
   coap_lg_xmit_t *xmit;
   uint64_t base;
   if (coap_binary_equal(wire, app)) return 1;
+  if (session->context->runtime_message_layer) return 0;
 #if COAP_OSCORE_SUPPORT
   coap_bin_const_t key = *wire;
   oscore_association_t *association = oscore_find_association(session, &key);

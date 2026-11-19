@@ -72,6 +72,30 @@ void coap_session_set_runtime_peer(coap_session_t *, const coap_address_t *);
 int coap_session_runtime_close_notices(coap_session_t *session);
 int coap_context_set_runtime_io(coap_context_t *, void *, coap_runtime_read_t,
                                coap_runtime_write_t, size_t maximum_pdu);
+/* Select application-owned blocks before creating the supplied client session. */
+int coap_context_set_runtime_message_layer(coap_context_t *);
+typedef enum coap_runtime_response_admission_t {
+  COAP_RUNTIME_RESPONSE_IGNORE,
+  COAP_RUNTIME_RESPONSE_ACK,
+  COAP_RUNTIME_RESPONSE_ACCEPT
+} coap_runtime_response_admission_t;
+/* Application response selection before queue or OSCORE association changes.
+ * The selected PDU is passed unchanged to the response handler. */
+typedef coap_runtime_response_admission_t (*coap_runtime_admit_response_t)(
+    coap_session_t *, const coap_pdu_t *, int protected_message);
+void coap_context_set_runtime_admit_response(coap_context_t *,
+                                             coap_runtime_admit_response_t);
+typedef struct coap_runtime_capacity_t {
+  size_t pdu_maximum;
+  size_t message_maximum;
+  uint8_t bert;
+  uint8_t needs_first_response;
+} coap_runtime_capacity_t;
+/* A read-only readiness and send limit snapshot. Never pumps I/O. */
+int coap_session_runtime_capacity(coap_session_t *, coap_runtime_capacity_t *);
+/* Attempt the ordinary optional insertion on an already allocated request.
+ * Upload setup calls this before saving its template and sets upload to 1. */
+int coap_session_runtime_tag(coap_session_t *, coap_pdu_t *, int upload);
 void coap_context_set_runtime_verify(coap_context_t *, coap_runtime_verify_t);
 void coap_context_set_runtime_replay(coap_context_t *, coap_runtime_replay_t);
 int coap_context_restore_runtime_replay(coap_context_t *, const uint8_t *, size_t,
