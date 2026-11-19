@@ -2004,6 +2004,14 @@ coap_send_runtime_notice(coap_session_t *session, coap_pdu_t *pdu, int close) {
     coap_delete_pdu(pdu);
     return COAP_INVALID_MID;
   });
+#ifdef COAP_RUNTIME_TEST
+  if (close && session->context->runtime_refuse_close_notice) {
+    session->context->runtime_refuse_close_notice = 0;
+    coap_delete_pdu_lkd(pdu);
+    coap_lock_unlock(session->context);
+    return COAP_INVALID_MID;
+  }
+#endif /* COAP_RUNTIME_TEST */
   if (session->context->runtime_message_layer &&
       session->state == COAP_SESSION_STATE_ESTABLISHED &&
       !session->partial_write &&
@@ -3896,6 +3904,8 @@ coap_runtime_select_response(coap_session_t *session, coap_pdu_t *pdu,
       return 0);
   if (admission == COAP_RUNTIME_RESPONSE_ACK)
     coap_send_ack_lkd(session, pdu);
+  else if (admission == COAP_RUNTIME_RESPONSE_RESET && pdu->type == COAP_MESSAGE_CON)
+    coap_send_rst_lkd(session, pdu);
   return admission == COAP_RUNTIME_RESPONSE_ACCEPT;
 }
 

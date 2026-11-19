@@ -2241,8 +2241,8 @@ coap_oscore_overhead(coap_session_t *session, coap_pdu_t *pdu) {
   /* Protected code held in inner PDU as token */
   overhead += 1;
 
-  /* Observe option (creates inner and outer */
-  option = coap_check_option(pdu, COAP_OPTION_OBSERVE, &opt_iter);
+  /* Observe option (creates inner and outer) */
+  option = pdu ? coap_check_option(pdu, COAP_OPTION_OBSERVE, &opt_iter) : NULL;
   if (option) {
     /* Assume delta is small */
     overhead += 2 + coap_opt_length(option);

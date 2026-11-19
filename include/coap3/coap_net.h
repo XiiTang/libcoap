@@ -77,6 +77,7 @@ int coap_context_set_runtime_message_layer(coap_context_t *);
 typedef enum coap_runtime_response_admission_t {
   COAP_RUNTIME_RESPONSE_IGNORE,
   COAP_RUNTIME_RESPONSE_ACK,
+  COAP_RUNTIME_RESPONSE_RESET,
   COAP_RUNTIME_RESPONSE_ACCEPT
 } coap_runtime_response_admission_t;
 /* Application response selection before queue or OSCORE association changes.
@@ -88,6 +89,8 @@ void coap_context_set_runtime_admit_response(coap_context_t *,
 typedef struct coap_runtime_capacity_t {
   size_t pdu_maximum;
   size_t message_maximum;
+  size_t security_overhead;
+  uint8_t reliable;
   uint8_t bert;
   uint8_t needs_first_response;
 } coap_runtime_capacity_t;

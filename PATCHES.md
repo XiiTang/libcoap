@@ -456,3 +456,13 @@ older frames using the existing bounded output callback. Both refuse behind
 a partial frame. A stale WANT_WRITE bit without a holder does not refuse a
 direct handoff. Boundless exercises all three explicit-deregister conditions
 in `supplied_message_layer_notice_reports_handoff_and_preserves_older_frame_order`.
+
+The message-layer issue path receives the negotiated frame budget and the
+pinned OSCORE overhead independently. Response admission can acknowledge an
+already handled notification or reset an unmatched confirmable response,
+without taking request credit in either case. The old handler decides this
+only after response dispatch. The direct Close notice path shares the
+existing one-notice fault hook.
+
+Witnesses are the CoAP supplied-message-layer tests, the controlled
+Block1/Block2 peers and the observation and bounded-close package tests.

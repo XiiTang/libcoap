@@ -647,6 +647,11 @@ coap_session_runtime_capacity(coap_session_t *session,
       ? session->runtime_csm_maximum : session->mtu - session->tls_overhead;
   capacity->pdu_maximum = coap_session_max_pdu_size_internal(session, limit);
   capacity->message_maximum = limit;
+  capacity->reliable = COAP_PROTO_RELIABLE(session->proto);
+  capacity->security_overhead = 0;
+#if COAP_OSCORE_SUPPORT
+  capacity->security_overhead = coap_oscore_overhead(session, NULL);
+#endif /* COAP_OSCORE_SUPPORT */
   capacity->bert = COAP_PROTO_RELIABLE(session->proto) &&
                    session->csm_bert_rem_support && session->csm_bert_loc_support;
 #if COAP_OSCORE_SUPPORT
