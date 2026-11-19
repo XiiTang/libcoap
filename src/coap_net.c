@@ -1995,6 +1995,29 @@ coap_send_runtime_close_notice(coap_session_t *session, coap_pdu_t *pdu,
   return coap_send_internal_mode(session, pdu, output_failed);
 }
 
+coap_mid_t
+coap_send_runtime_notice(coap_session_t *session, coap_pdu_t *pdu, int close) {
+  coap_mid_t mid = COAP_INVALID_MID;
+  int output_failed = 0;
+
+  coap_lock_lock(session->context, {
+    coap_delete_pdu(pdu);
+    return COAP_INVALID_MID;
+  });
+  if (session->context->runtime_message_layer &&
+      session->state == COAP_SESSION_STATE_ESTABLISHED &&
+      !session->partial_write &&
+      (close || !session->delayqueue)) {
+    pdu->type = COAP_PROTO_RELIABLE(session->proto) ? COAP_MESSAGE_CON : COAP_MESSAGE_NON;
+    pdu->session = session;
+    mid = coap_send_internal_mode(session, pdu, &output_failed);
+  } else {
+    coap_delete_pdu_lkd(pdu);
+  }
+  coap_lock_unlock(session->context);
+  return mid;
+}
+
 static coap_mid_t
 coap_retransmit_after_write(coap_context_t *context, coap_queue_t *node,
                            const ssize_t *already_written) {

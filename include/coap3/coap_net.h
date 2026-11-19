@@ -104,6 +104,9 @@ typedef ssize_t (*coap_runtime_application_write_t)(
 void coap_context_set_runtime_application_output(coap_context_t *,
     coap_runtime_preflight_t, coap_runtime_application_write_t);
 int coap_session_runtime_resume_output(coap_session_t *);
+/* Consume a prepared notice and attempt one direct local handoff. Close
+ * may bypass older unwritten application entries, while deregister may not. */
+coap_mid_t coap_send_runtime_notice(coap_session_t *, coap_pdu_t *, int close);
 /* Called after response dispatch, before the following frame. A returned
  * PDU transfers ownership to libcoap. It can replace the response's attempt;
  * a protected Echo retry acknowledges the challenge before sending. */

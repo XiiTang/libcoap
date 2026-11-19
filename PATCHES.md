@@ -445,3 +445,14 @@ The Boundless regression
 `supplied_message_layer_dispatches_only_an_admitted_block_head` also drives
 a final-write veto after a genuine ACK released NSTART, then forgets the
 vetoed node and observes the next live CON without another input.
+
+## Selected observation notice handoff
+
+A valid result from ordinary native send can name a frame still in the
+delay queue. Exact retirement would discard that frame. The opted-in
+client can instead require a direct handoff. Explicit deregister refuses
+behind an older frame or a full supplied queue. Close can bypass unwritten
+older frames using the existing bounded output callback. Both refuse behind
+a partial frame. A stale WANT_WRITE bit without a holder does not refuse a
+direct handoff. Boundless exercises all three explicit-deregister conditions
+in `supplied_message_layer_notice_reports_handoff_and_preserves_older_frame_order`.
