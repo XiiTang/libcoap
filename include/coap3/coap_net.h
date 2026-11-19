@@ -124,6 +124,7 @@ int coap_session_runtime_capacity(coap_session_t *, coap_runtime_capacity_t *);
 /* Attempt the ordinary optional insertion on an already allocated request.
  * Upload setup calls this before saving its template and sets upload to 1. */
 int coap_session_runtime_tag(coap_session_t *, coap_pdu_t *, int upload);
+int coap_pdu_insert_runtime_echo(coap_pdu_t *, const uint8_t *, size_t);
 void coap_context_set_runtime_verify(coap_context_t *, coap_runtime_verify_t);
 void coap_context_set_runtime_replay(coap_context_t *, coap_runtime_replay_t);
 int coap_context_restore_runtime_replay(coap_context_t *, const uint8_t *, size_t,

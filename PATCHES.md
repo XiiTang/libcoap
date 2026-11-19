@@ -466,3 +466,9 @@ existing one-notice fault hook.
 
 Witnesses are the CoAP supplied-message-layer tests, the controlled
 Block1/Block2 peers and the observation and bounded-close package tests.
+
+For adapter-authored continuations, expose the ordinary Echo insertion helper.
+Use the pin's insertion order and intermediate size check, including a
+following zero-length Request-Tag whose delta header can shrink. Preserve
+the native wrapping tag counter. The UDP wrap witness uses the real constructor,
+reuses an empty tag while another operation is live, and reads all 4,097 blocks.

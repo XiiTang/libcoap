@@ -4631,6 +4631,18 @@ coap_check_update_token(coap_session_t *session, coap_pdu_t *pdu) {
 #endif /* ! COAP_CLIENT_SUPPORT */
 #if COAP_CLIENT_SUPPORT
 int
+coap_pdu_insert_runtime_echo(coap_pdu_t *pdu, const uint8_t *value, size_t length) {
+  return coap_insert_option(pdu, COAP_OPTION_ECHO, length, value) != 0;
+}
+
+#ifdef COAP_RUNTIME_TEST
+void
+coap_session_test_seed_request_tag(coap_session_t *session, uint32_t seed) {
+  session->tx_rtag = seed;
+}
+#endif /* COAP_RUNTIME_TEST */
+
+int
 coap_session_runtime_tag(coap_session_t *session, coap_pdu_t *pdu, int upload) {
   coap_opt_iterator_t iterator;
   uint8_t encoded[4];
