@@ -472,3 +472,20 @@ Use the pin's insertion order and intermediate size check, including a
 following zero-length Request-Tag whose delta header can shrink. Preserve
 the native wrapping tag counter. The UDP wrap witness uses the real constructor,
 reuses an empty tag while another operation is live, and reads all 4,097 blocks.
+
+## Reliable sizing after OSCORE and malformed Block2 heads
+
+At the pin, libcoap checks the initial large-request reserve before
+protecting the PDU. Its OSCORE encoder can grow the PDU without checking
+the peer CSM, and its Block2 layer converts a short, ordinary non-final
+block to 4.02 before application dispatch. The message-layer client checks
+the encoded OSCORE frame before saving its association. Reliable protected
+continuations run that preparation before taking the challenge or replacing
+the old attempt. A refused candidate may spend a sender sequence number.
+It leaves no candidate association and sends nothing. The selected short
+head reaches application dispatch as 4.02 without confirming Observe.
+
+Boundless's `reliable_oscore_checks_reserved_admission_and_the_complete_ciphertext`
+checks the initial reserve and a real protected TCP frame against CSM.
+`short_block2_head_publishes_bad_option_and_never_fetches` checks the code,
+accepted prefix and absence of a fetch at a UDP peer.

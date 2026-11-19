@@ -1434,6 +1434,9 @@ coap_send_lkd(coap_session_t *session, coap_pdu_t *pdu) {
 
   coap_lock_check_locked(session->context);
 
+  if (pdu->runtime_application)
+    session->runtime_oversize = 0;
+
   /* Check validity of sending code */
   if (!coap_check_code_class(session, pdu)) {
     coap_log_err("coap_send: Invalid PDU code (%d.%02d)\n",
@@ -1510,7 +1513,8 @@ coap_send_lkd(coap_session_t *session, coap_pdu_t *pdu) {
       session->doing_first = 1;
     }
     /* Need to convert Proxy-Uri to Proxy-Scheme option if needed */
-    if (COAP_PDU_IS_REQUEST(pdu) && !coap_rebuild_pdu_for_proxy(pdu)) {
+    if (!pdu->runtime_protected && COAP_PDU_IS_REQUEST(pdu) &&
+        !coap_rebuild_pdu_for_proxy(pdu)) {
       goto error;
     }
   }
@@ -1874,7 +1878,8 @@ coap_send_internal_mode(coap_session_t *session, coap_pdu_t *pdu, int *close_out
 #if COAP_OSCORE_SUPPORT
   if (session->oscore_encryption) {
     /* Need to convert Proxy-Uri to Proxy-Scheme option if needed */
-    if (COAP_PDU_IS_REQUEST(pdu) && !coap_rebuild_pdu_for_proxy(pdu))
+    if (!pdu->runtime_protected && COAP_PDU_IS_REQUEST(pdu) &&
+        !coap_rebuild_pdu_for_proxy(pdu))
       goto error;
   }
 #endif /* COAP_OSCORE_SUPPORT */
@@ -1916,6 +1921,7 @@ coap_send_internal_mode(coap_session_t *session, coap_pdu_t *pdu, int *close_out
 
 #if COAP_OSCORE_SUPPORT
   if (session->oscore_encryption &&
+      !pdu->runtime_protected &&
       pdu->type != COAP_MESSAGE_RST &&
       !(pdu->type == COAP_MESSAGE_ACK && pdu->code == COAP_EMPTY_CODE)) {
     /* Refactor PDU as appropriate RFC8613 */
@@ -2004,6 +2010,7 @@ coap_send_runtime_notice(coap_session_t *session, coap_pdu_t *pdu, int close) {
     coap_delete_pdu(pdu);
     return COAP_INVALID_MID;
   });
+  session->runtime_oversize = 0;
 #ifdef COAP_RUNTIME_TEST
   if (close && session->context->runtime_refuse_close_notice) {
     session->context->runtime_refuse_close_notice = 0;
@@ -3906,10 +3913,43 @@ coap_runtime_select_response(coap_session_t *session, coap_pdu_t *pdu,
     coap_send_ack_lkd(session, pdu);
   else if (admission == COAP_RUNTIME_RESPONSE_RESET && pdu->type == COAP_MESSAGE_CON)
     coap_send_rst_lkd(session, pdu);
+  else if (admission == COAP_RUNTIME_RESPONSE_BAD_BLOCK_LENGTH) {
+    pdu->code = COAP_RESPONSE_CODE(402);
+    coap_remove_option(pdu, COAP_OPTION_OBSERVE);
+    return 1;
+  }
   return admission == COAP_RUNTIME_RESPONSE_ACCEPT;
 }
 
 #if COAP_CLIENT_SUPPORT
+/* Encode a reliable protected replacement before settling its trigger.
+ * The encoder checks the complete frame before saving its association. */
+static int
+coap_prepare_runtime_continuation(coap_session_t *session, coap_pdu_t **pdu) {
+  session->runtime_oversize = 0;
+#if COAP_OSCORE_SUPPORT
+  if (session->oscore_encryption && COAP_PROTO_RELIABLE(session->proto)) {
+    coap_pdu_t *plain = *pdu;
+    coap_pdu_t *protected_pdu;
+
+    plain->type = COAP_MESSAGE_CON;
+    plain->session = session;
+    if (!coap_rebuild_pdu_for_proxy(plain))
+      return 0;
+    protected_pdu = coap_oscore_new_pdu_encrypted_lkd(session, plain, NULL, 0);
+    if (!protected_pdu)
+      return 0;
+    coap_pdu_set_runtime_destination(protected_pdu, &plain->runtime_destination);
+    protected_pdu->runtime_protected = 1;
+    coap_delete_pdu_lkd(plain);
+    *pdu = protected_pdu;
+  }
+#else
+  (void)pdu;
+#endif
+  return 1;
+}
+
 static void
 handle_response(coap_context_t *context, coap_session_t *session,
                 coap_pdu_t *sent, coap_pdu_t *rcvd, int admitted) {
@@ -4010,19 +4050,22 @@ handle_response(coap_context_t *context, coap_session_t *session,
           return);
       if (next) {
         coap_mid_t result = COAP_INVALID_MID;
-        if (ack_first)
+        int prepared;
+        next->mid = coap_new_message_id_lkd(session);
+        prepared = coap_prepare_runtime_continuation(session, &next);
+        if (prepared && ack_first)
           coap_send_ack_lkd(session, rcvd);
-        if (!withdraw || coap_session_forget_runtime_tokens_lkd(session, &rcvd->actual_token, 1)) {
-          next->mid = coap_new_message_id_lkd(session);
+        if (prepared &&
+            (!withdraw || coap_session_forget_runtime_tokens_lkd(session, &rcvd->actual_token, 1))) {
           result = coap_send_lkd(session, next);
         } else {
           coap_delete_pdu_lkd(next);
         }
         if (context->runtime_continue_result) {
           coap_lock_callback(context,
-              context->runtime_continue_result(session, rcvd, result));
+              context->runtime_continue_result(session, rcvd, result, prepared));
         }
-        if (ack_first) {
+        if (prepared && ack_first) {
           session->last_con_handler_res = COAP_RESPONSE_OK;
           return;
         }

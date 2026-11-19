@@ -143,6 +143,7 @@ struct coap_pdu_t {
                                  header (0 until header is encoded) */
   coap_address_t runtime_destination;
   uint8_t runtime_application;
+  uint8_t runtime_protected;
   uint8_t runtime_observe_ordered;
   uint8_t runtime_echo_final;
   coap_bin_const_t *runtime_echo_app_token;

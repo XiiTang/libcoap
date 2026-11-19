@@ -78,16 +78,18 @@ typedef enum coap_runtime_response_admission_t {
   COAP_RUNTIME_RESPONSE_IGNORE,
   COAP_RUNTIME_RESPONSE_ACK,
   COAP_RUNTIME_RESPONSE_RESET,
-  COAP_RUNTIME_RESPONSE_ACCEPT
+  COAP_RUNTIME_RESPONSE_ACCEPT,
+  COAP_RUNTIME_RESPONSE_BAD_BLOCK_LENGTH
 } coap_runtime_response_admission_t;
 /* Application response selection before queue or OSCORE association changes.
- * The selected PDU is passed unchanged to the response handler. */
+ * A short first block is admitted with the native block-mode error code. */
 typedef coap_runtime_response_admission_t (*coap_runtime_admit_response_t)(
     coap_session_t *, const coap_pdu_t *, int protected_message);
 void coap_context_set_runtime_admit_response(coap_context_t *,
                                              coap_runtime_admit_response_t);
 typedef struct coap_runtime_capacity_t {
   size_t pdu_maximum;
+  size_t initial_pdu_maximum;
   size_t message_maximum;
   size_t security_overhead;
   uint8_t reliable;
@@ -116,11 +118,13 @@ coap_mid_t coap_send_runtime_notice(coap_session_t *, coap_pdu_t *, int close);
 typedef coap_pdu_t *(*coap_runtime_continue_t)(coap_session_t *,
     const coap_pdu_t *response, int *withdraw, int *ack_first);
 typedef void (*coap_runtime_continue_result_t)(coap_session_t *,
-    const coap_pdu_t *response, coap_mid_t result);
+    const coap_pdu_t *response, coap_mid_t result, int prepared);
 void coap_context_set_runtime_continuation(coap_context_t *,
     coap_runtime_continue_t, coap_runtime_continue_result_t);
 /* A read-only readiness and send limit snapshot. Never pumps I/O. */
 int coap_session_runtime_capacity(coap_session_t *, coap_runtime_capacity_t *);
+/* Complete encoded length when the last preparation exceeded the CSM. */
+size_t coap_session_runtime_oversize(const coap_session_t *);
 /* Attempt the ordinary optional insertion on an already allocated request.
  * Upload setup calls this before saving its template and sets upload to 1. */
 int coap_session_runtime_tag(coap_session_t *, coap_pdu_t *, int upload);

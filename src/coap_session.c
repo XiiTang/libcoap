@@ -646,6 +646,8 @@ coap_session_runtime_capacity(coap_session_t *session,
   limit = COAP_PROTO_RELIABLE(session->proto)
       ? session->runtime_csm_maximum : session->mtu - session->tls_overhead;
   capacity->pdu_maximum = coap_session_max_pdu_size_internal(session, limit);
+  capacity->initial_pdu_maximum = coap_session_max_pdu_size_internal(
+      session, session->mtu - session->tls_overhead);
   capacity->message_maximum = limit;
   capacity->reliable = COAP_PROTO_RELIABLE(session->proto);
   capacity->security_overhead = 0;
@@ -661,6 +663,11 @@ coap_session_runtime_capacity(coap_session_t *session,
   capacity->needs_first_response = 0;
 #endif /* ! COAP_OSCORE_SUPPORT */
   return 1;
+}
+
+size_t
+coap_session_runtime_oversize(const coap_session_t *session) {
+  return session->runtime_oversize;
 }
 
 size_t

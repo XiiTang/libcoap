@@ -52,6 +52,7 @@ coap_pdu_clear(coap_pdu_t *pdu, size_t size) {
   pdu->actual_token.length = 0;
   pdu->e_token_length = 0;
   pdu->runtime_application = 0;
+  pdu->runtime_protected = 0;
   pdu->runtime_observe_ordered = 0;
   pdu->runtime_echo_final = 0;
   pdu->runtime_echo_app_token = NULL;

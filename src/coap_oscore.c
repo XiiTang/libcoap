@@ -691,6 +691,11 @@ coap_oscore_new_pdu_encrypted_lkd(coap_session_t *session,
   if (!coap_pdu_encode_header(osc_pdu, session->proto)) {
     goto error;
   }
+  if (pdu->runtime_application && COAP_PROTO_RELIABLE(session->proto) &&
+      osc_pdu->used_size + osc_pdu->hdr_size > session->runtime_csm_maximum) {
+    session->runtime_oversize = osc_pdu->used_size + osc_pdu->hdr_size;
+    goto error;
+  }
 
   /*
    * Set up an association for handling a response if this is a request
@@ -1750,7 +1755,8 @@ coap_oscore_decrypt_pdu(coap_session_t *session,
       association->runtime_observe_sequence = sequence;
       decrypt_pdu->runtime_observe_ordered = 1;
     }
-    if (!doing_resp_observe)
+    if (!doing_resp_observe ||
+        !coap_check_option(decrypt_pdu, COAP_OPTION_OBSERVE, &opt_iter))
       association->is_observe = 0;
   }
   if (association && !coap_request && !got_resp_piv && session->context->runtime_replay)

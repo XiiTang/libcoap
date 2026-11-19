@@ -76,6 +76,7 @@ struct coap_session_t {
   coap_pdu_t *runtime_writing;     /**< application PDU during supplied write */
   uint8_t runtime_write_veto;     /**< callback denied this write */
   uint32_t runtime_csm_maximum;     /**< unrounded peer CSM limit */
+  size_t runtime_oversize;         /**< measured refusal from this send preparation */
   size_t csm_rcv_mtu;               /**< CSM mtu (rcv) */
   coap_addr_hash_t addr_hash;  /**< Address hash for server incoming packets */
   UT_hash_handle hh;
