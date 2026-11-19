@@ -73,6 +73,8 @@ struct coap_session_t {
   unsigned ref;                     /**< reference count from queues */
   size_t tls_overhead;              /**< overhead of TLS layer */
   size_t mtu;                       /**< path or CSM mtu (xmt) */
+  coap_pdu_t *runtime_writing;     /**< application PDU during supplied write */
+  uint8_t runtime_write_veto;     /**< callback denied this write */
   uint32_t runtime_csm_maximum;     /**< unrounded peer CSM limit */
   size_t csm_rcv_mtu;               /**< CSM mtu (rcv) */
   coap_addr_hash_t addr_hash;  /**< Address hash for server incoming packets */

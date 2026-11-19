@@ -4692,8 +4692,8 @@ runtime_token_matches_any(coap_session_t *session, const coap_bin_const_t *wire,
  * so every token being forgotten is removed before the release.
  */
 int
-coap_session_forget_runtime_tokens(coap_session_t *session, const coap_bin_const_t *tokens,
-                                   size_t count) {
+coap_session_forget_runtime_tokens_lkd(coap_session_t *session,
+                                       const coap_bin_const_t *tokens, size_t count) {
   coap_queue_t **link, *q;
   coap_lg_crcv_t *rcv, *rtmp;
   coap_lg_xmit_t *xmit, *xtmp;
@@ -4702,12 +4702,10 @@ coap_session_forget_runtime_tokens(coap_session_t *session, const coap_bin_const
   if (!session->context->runtime_read) return 0;
   for (i = 0; i < count; i++)
     if (tokens[i].length > 8) return 0;
-  coap_lock_lock(session->context, return 0);
+  coap_lock_check_locked(session->context);
   if (session->partial_write && session->delayqueue &&
-      runtime_token_matches_any(session, &session->delayqueue->pdu->actual_token, tokens, count)) {
-    coap_lock_unlock(session->context);
+      runtime_token_matches_any(session, &session->delayqueue->pdu->actual_token, tokens, count))
     return 0;
-  }
   link = &session->context->sendqueue;
   while ((q = *link)) {
     if (q->session == session &&
@@ -4751,11 +4749,22 @@ coap_session_forget_runtime_tokens(coap_session_t *session, const coap_bin_const
    * As coap_cancel_all_messages: a removed CON frees an NSTART slot. NSTART
    * governs only unreliable transports, and a stream may be partly written.
    */
-  if (removed_con && COAP_PROTO_NOT_RELIABLE(session->proto) &&
+  if (!session->context->runtime_message_layer &&
+      removed_con && COAP_PROTO_NOT_RELIABLE(session->proto) &&
       session->state == COAP_SESSION_STATE_ESTABLISHED)
     coap_session_connected(session);
-  coap_lock_unlock(session->context);
   return 1;
+}
+
+int
+coap_session_forget_runtime_tokens(coap_session_t *session,
+                                   const coap_bin_const_t *tokens, size_t count) {
+  int result;
+
+  coap_lock_lock(session->context, return 0);
+  result = coap_session_forget_runtime_tokens_lkd(session, tokens, count);
+  coap_lock_unlock(session->context);
+  return result;
 }
 void coap_session_set_runtime_peer(coap_session_t *session, const coap_address_t *peer) {
   if (session->context->runtime_read) session->addr_info.remote = *peer;

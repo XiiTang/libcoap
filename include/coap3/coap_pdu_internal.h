@@ -141,6 +141,8 @@ struct coap_pdu_t {
   uint8_t max_hdr_size;     /**< space reserved for protocol-specific header */
   uint8_t hdr_size;         /**< actual size used for protocol-specific
                                  header (0 until header is encoded) */
+  coap_address_t runtime_destination;
+  uint8_t runtime_application;
   uint8_t runtime_observe_ordered;
   uint8_t runtime_echo_final;
   coap_bin_const_t *runtime_echo_app_token;

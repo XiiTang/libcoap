@@ -424,3 +424,24 @@ Boundless regression: `supplied_message_layer_dispatches_only_an_admitted_block_
 checks that a wrong-MID piggybacked answer does not release NSTART, the
 genuine answer releases it once, and the raw response owns no automatic
 Block2 fetch.
+
+## Supplied message-layer writes and inline continuations
+
+The native writer keeps its own queues and retransmission timers. A native
+poll can otherwise select a delayed or due PDU before the supplied caller
+withdraws it. The opted-in path carries its wire token and destination through
+the direct, delay, stream and DTLS write paths. Eligibility is checked before
+the native action and again where bytes enter supplied I/O. An eligibility
+veto retains the native holder without charging another CON or counting a
+retry. The caller forgets that holder and resumes the same queue. Ordinary
+clients retain their native send behavior.
+
+The native block layer can send a continuation before dispatch of the next
+frame. Preserve that ordering for one application-supplied continuation,
+after the response handler returns and any selected token is withdrawn.
+Protected Echo can keep its ACK-before-retry order.
+
+The Boundless regression
+`supplied_message_layer_dispatches_only_an_admitted_block_head` also drives
+a final-write veto after a genuine ACK released NSTART, then forgets the
+vetoed node and observes the next live CON without another input.

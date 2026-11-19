@@ -876,7 +876,16 @@ coap_session_connected(coap_session_t *session) {
     if (q->pdu->type == COAP_MESSAGE_CON && COAP_PROTO_NOT_RELIABLE(session->proto)) {
       if (session->con_active >= COAP_NSTART(session))
         break;
-      session->con_active++;
+      if (!session->context->runtime_message_layer)
+        session->con_active++;
+    }
+    if (session->context->runtime_message_layer) {
+      bytes_written = coap_session_send_pdu(session, q->pdu);
+      if (bytes_written == COAP_RUNTIME_WRITE_VETO)
+        break;
+      if (q->pdu->type == COAP_MESSAGE_CON &&
+          COAP_PROTO_NOT_RELIABLE(session->proto) && bytes_written >= 0)
+        session->con_active++;
     }
     /* Take entry off the queue */
     session->delayqueue = q->next;
@@ -884,8 +893,10 @@ coap_session_connected(coap_session_t *session) {
 
     coap_log_debug("** %s: mid=0x%04x: transmitted after delay\n",
                    coap_session_str(session), (int)q->pdu->mid);
-    bytes_written = coap_session_send_pdu(session, q->pdu);
-    if (q->pdu->type == COAP_MESSAGE_CON && COAP_PROTO_NOT_RELIABLE(session->proto)) {
+    if (!session->context->runtime_message_layer)
+      bytes_written = coap_session_send_pdu(session, q->pdu);
+    if (q->pdu->type == COAP_MESSAGE_CON && COAP_PROTO_NOT_RELIABLE(session->proto) &&
+        (!session->context->runtime_message_layer || bytes_written >= 0)) {
       if (coap_wait_ack(session->context, session, q) >= 0)
         q = NULL;
     }

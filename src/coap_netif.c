@@ -44,6 +44,53 @@ coap_context_set_runtime_admit_response(coap_context_t *ctx,
   ctx->runtime_admit_response = admit;
 }
 
+void
+coap_context_set_runtime_application_output(coap_context_t *ctx,
+    coap_runtime_preflight_t preflight, coap_runtime_application_write_t write) {
+  ctx->runtime_preflight = preflight;
+  ctx->runtime_application_write = write;
+}
+
+void
+coap_context_set_runtime_continuation(coap_context_t *ctx,
+    coap_runtime_continue_t continuation,
+    coap_runtime_continue_result_t result) {
+  ctx->runtime_continue = continuation;
+  ctx->runtime_continue_result = result;
+}
+
+void
+coap_pdu_set_runtime_destination(coap_pdu_t *pdu, const coap_address_t *peer) {
+  pdu->runtime_destination = *peer;
+  pdu->runtime_application = 1;
+}
+
+static ssize_t
+coap_runtime_write(coap_session_t *session, const uint8_t *data, size_t length,
+                   int datagram) {
+  coap_context_t *ctx = session->context;
+  const coap_pdu_t *pdu = session->runtime_writing;
+  ssize_t written;
+
+  /* The DTLS BIO also sends alerts and handshake records. They do not
+   * belong to the application attempt that entered SSL_write. */
+  if (pdu && ctx->runtime_application_write &&
+      (session->proto != COAP_PROTO_DTLS || (length && data[0] == 23))) {
+    written = ctx->runtime_application_write(ctx->runtime_io, data, length,
+                &pdu->actual_token, &pdu->runtime_destination, datagram);
+    if (written == COAP_RUNTIME_WRITE_VETO) {
+      session->runtime_write_veto = 1;
+      /* In DTLS this follows the normal BIO retry path. The vendored
+       * OpenSSL DTLS record writer drops the unwritten datagram. */
+      return 0;
+    }
+    return written;
+  }
+
+  return ctx->runtime_write(ctx->runtime_io, data, length,
+                            datagram ? &session->addr_info.remote : NULL);
+}
+
 void coap_context_set_runtime_received(coap_context_t *ctx, coap_runtime_received_t received) {
   ctx->runtime_received = received;
 }
@@ -190,8 +237,7 @@ coap_netif_dgrm_write(coap_session_t *session, const uint8_t *data,
 #endif /* COAP_SERVER_SUPPORT */
 
   if (session->context->runtime_write)
-    return session->context->runtime_write(session->context->runtime_io, data,
-                                           datalen, &session->addr_info.remote);
+    return coap_runtime_write(session, data, datalen, 1);
   bytes_written = coap_socket_send(sock, session, data, datalen);
   keep_errno = errno;
   if (bytes_written <= 0) {
@@ -306,7 +352,7 @@ ssize_t
 coap_netif_strm_write(coap_session_t *session, const uint8_t *data,
                       size_t datalen) {
   if (session->context->runtime_write) {
-    ssize_t n = session->context->runtime_write(session->context->runtime_io, data, datalen, NULL);
+    ssize_t n = coap_runtime_write(session, data, datalen, 0);
     if (n < (ssize_t)datalen) session->sock.flags |= COAP_SOCKET_WANT_WRITE;
     else session->sock.flags &= ~COAP_SOCKET_WANT_WRITE;
     session->sock.flags &= ~COAP_SOCKET_CAN_WRITE;

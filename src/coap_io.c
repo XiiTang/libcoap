@@ -1351,12 +1351,19 @@ coap_io_prepare_io_lkd(coap_context_t *ctx,
   nextpdu = coap_peek_next(ctx);
   while (nextpdu && now >= ctx->sendqueue_basetime &&
          nextpdu->t <= now - ctx->sendqueue_basetime) {
-    coap_retransmit(ctx, coap_pop_next(ctx));
+    if (!coap_runtime_retransmit_due(ctx, nextpdu))
+      break;
     nextpdu = coap_peek_next(ctx);
   }
-  if (nextpdu && (timeout == 0 ||
-                  nextpdu->t - (now - ctx->sendqueue_basetime) < timeout))
-    timeout = nextpdu->t - (now - ctx->sendqueue_basetime);
+  if (nextpdu) {
+    coap_tick_t elapsed = now >= ctx->sendqueue_basetime ?
+                        now - ctx->sendqueue_basetime : 0;
+    /* A vetoed due entry is still owned by F7. Return without retrying
+     * it here or underflowing its deadline. */
+    coap_tick_t remaining = nextpdu->t > elapsed ? nextpdu->t - elapsed : 1;
+    if (timeout == 0 || remaining < timeout)
+      timeout = remaining;
+  }
 
   /* Check for DTLS timeouts */
   if (ctx->dtls_context) {

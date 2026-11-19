@@ -995,15 +995,49 @@ coap_send_ack_lkd(coap_session_t *session, const coap_pdu_t *request) {
   return result;
 }
 
+int
+coap_runtime_preflight(coap_session_t *session, const coap_pdu_t *pdu) {
+  coap_context_t *context = session->context;
+
+  if (!context->runtime_message_layer || !pdu->runtime_application ||
+      !context->runtime_preflight)
+    return 1;
+
+  return context->runtime_preflight(context->runtime_io, &pdu->actual_token,
+                                     &pdu->runtime_destination);
+}
+
+ssize_t
+coap_session_write_pdu(coap_session_t *session, coap_pdu_t *pdu, size_t offset) {
+  ssize_t bytes_written;
+  coap_address_t peer;
+  int application = session->context->runtime_message_layer && pdu->runtime_application;
+  assert(pdu->hdr_size > 0);
+  assert(offset < pdu->used_size + pdu->hdr_size);
+
+  if (!coap_runtime_preflight(session, pdu))
+    return COAP_RUNTIME_WRITE_VETO;
+
+  session->runtime_write_veto = 0;
+  if (application) {
+    peer = session->addr_info.remote;
+    session->addr_info.remote = pdu->runtime_destination;
+    session->runtime_writing = pdu;
+  }
+  bytes_written = session->sock.lfunc[COAP_LAYER_SESSION].l_write(session,
+                  pdu->token - pdu->hdr_size + offset,
+                  pdu->used_size + pdu->hdr_size - offset);
+  if (application) {
+    session->runtime_writing = NULL;
+    session->addr_info.remote = peer;
+  }
+  return session->runtime_write_veto ? COAP_RUNTIME_WRITE_VETO : bytes_written;
+}
+
 ssize_t
 coap_session_send_pdu(coap_session_t *session, coap_pdu_t *pdu) {
-  ssize_t bytes_written = -1;
-  assert(pdu->hdr_size > 0);
+  ssize_t bytes_written = coap_session_write_pdu(session, pdu, 0);
 
-  /* Caller handles partial writes */
-  bytes_written = session->sock.lfunc[COAP_LAYER_SESSION].l_write(session,
-                  pdu->token - pdu->hdr_size,
-                  pdu->used_size + pdu->hdr_size);
   coap_show_pdu(COAP_LOG_DEBUG, pdu);
   return bytes_written;
 }
@@ -1041,7 +1075,9 @@ coap_send_pdu(coap_session_t *session, coap_pdu_t *pdu, coap_queue_t *node,
 
   if (session->state != COAP_SESSION_STATE_ESTABLISHED ||
       (pdu->type == COAP_MESSAGE_CON &&
-       session->con_active >= COAP_NSTART(session))) {
+       session->con_active >= COAP_NSTART(session)) ||
+      (session->context->runtime_message_layer && pdu->runtime_application &&
+       !node && session->delayqueue)) {
     return coap_session_delay_pdu(session, pdu, node);
   }
 
@@ -1890,6 +1926,8 @@ coap_send_internal_mode(coap_session_t *session, coap_pdu_t *pdu, int *close_out
       coap_log_warn("OSCORE: PDU could not be encrypted\n");
       goto error;
     }
+    if (pdu->runtime_application)
+      coap_pdu_set_runtime_destination(osc_pdu, &pdu->runtime_destination);
     coap_delete_pdu_lkd(pdu);
     pdu = osc_pdu;
   }
@@ -1957,8 +1995,9 @@ coap_send_runtime_close_notice(coap_session_t *session, coap_pdu_t *pdu,
   return coap_send_internal_mode(session, pdu, output_failed);
 }
 
-coap_mid_t
-coap_retransmit(coap_context_t *context, coap_queue_t *node) {
+static coap_mid_t
+coap_retransmit_after_write(coap_context_t *context, coap_queue_t *node,
+                           const ssize_t *already_written) {
   if (!context || !node)
     return COAP_INVALID_MID;
 
@@ -2001,9 +2040,13 @@ coap_retransmit(coap_context_t *context, coap_queue_t *node) {
                      (unsigned)(next_delay * 1000 / COAP_TICKS_PER_SECOND));
     }
 
-    if (node->session->con_active)
-      node->session->con_active--;
-    bytes_written = coap_send_pdu(node->session, node->pdu, node, NULL);
+    if (already_written) {
+      bytes_written = *already_written;
+    } else {
+      if (node->session->con_active)
+        node->session->con_active--;
+      bytes_written = coap_send_pdu(node->session, node->pdu, node, NULL);
+    }
 
     if (node->is_mcast) {
       coap_session_connected(node->session);
@@ -2081,6 +2124,31 @@ coap_handle_dgram_for_proto(coap_context_t *ctx, coap_session_t *session, coap_p
   return result;
 }
 
+coap_mid_t
+coap_retransmit(coap_context_t *context, coap_queue_t *node) {
+  return coap_retransmit_after_write(context, node, NULL);
+}
+
+int
+coap_runtime_retransmit_due(coap_context_t *context, coap_queue_t *node) {
+  ssize_t written;
+
+  if (context->runtime_message_layer && node->pdu->runtime_application) {
+    if (!coap_runtime_preflight(node->session, node->pdu))
+      return 0;
+    if (node->retransmit_cnt < node->session->max_retransmit &&
+        node->session->state == COAP_SESSION_STATE_ESTABLISHED) {
+      written = coap_session_send_pdu(node->session, node->pdu);
+      if (written == COAP_RUNTIME_WRITE_VETO)
+        return 0;
+      coap_retransmit_after_write(context, coap_pop_next(context), &written);
+      return 1;
+    }
+  }
+  coap_retransmit(context, coap_pop_next(context));
+  return 1;
+}
+
 #if COAP_CLIENT_SUPPORT
 void
 coap_connect_session(coap_session_t *session, coap_tick_t now) {
@@ -2112,9 +2180,7 @@ coap_write_session(coap_context_t *ctx, coap_session_t *session, coap_tick_t now
     coap_log_debug("** %s: mid=0x%04x: transmitted after delay\n",
                    coap_session_str(session), (int)q->pdu->mid);
     assert(session->partial_write < q->pdu->used_size + q->pdu->hdr_size);
-    bytes_written = session->sock.lfunc[COAP_LAYER_SESSION].l_write(session,
-                    q->pdu->token - q->pdu->hdr_size + session->partial_write,
-                    q->pdu->used_size + q->pdu->hdr_size - session->partial_write);
+    bytes_written = coap_session_write_pdu(session, q->pdu, session->partial_write);
     if (bytes_written > 0)
       session->last_rx_tx = now;
     if (bytes_written <= 0 ||
@@ -2127,6 +2193,28 @@ coap_write_session(coap_context_t *ctx, coap_session_t *session, coap_tick_t now
     session->partial_write = 0;
     coap_delete_node_lkd(q);
   }
+}
+
+int
+coap_session_runtime_resume_output(coap_session_t *session) {
+  coap_context_t *ctx = session->context;
+
+  if (!ctx->runtime_message_layer)
+    return 0;
+
+  coap_lock_lock(ctx, return 0);
+  if (session->state == COAP_SESSION_STATE_ESTABLISHED && session->delayqueue) {
+    if (COAP_PROTO_NOT_RELIABLE(session->proto)) {
+      coap_session_connected(session);
+    } else {
+      coap_tick_t now;
+
+      coap_ticks(&now);
+      coap_write_session(ctx, session, now);
+    }
+  }
+  coap_lock_unlock(ctx);
+  return 1;
 }
 
 void
@@ -3879,6 +3967,34 @@ handle_response(coap_context_t *context, coap_session_t *session,
                                                              rcvd->mid),
                                    /* context is being freed off */
                                    return);
+    if (ret == COAP_RESPONSE_OK && context->runtime_continue) {
+      coap_pdu_t *next = NULL;
+      int withdraw = 0;
+      int ack_first = 0;
+
+      coap_lock_callback_ret_release(next, context,
+          context->runtime_continue(session, rcvd, &withdraw, &ack_first),
+          return);
+      if (next) {
+        coap_mid_t result = COAP_INVALID_MID;
+        if (ack_first)
+          coap_send_ack_lkd(session, rcvd);
+        if (!withdraw || coap_session_forget_runtime_tokens_lkd(session, &rcvd->actual_token, 1)) {
+          next->mid = coap_new_message_id_lkd(session);
+          result = coap_send_lkd(session, next);
+        } else {
+          coap_delete_pdu_lkd(next);
+        }
+        if (context->runtime_continue_result) {
+          coap_lock_callback(context,
+              context->runtime_continue_result(session, rcvd, result));
+        }
+        if (ack_first) {
+          session->last_con_handler_res = COAP_RESPONSE_OK;
+          return;
+        }
+      }
+    }
     if (session->runtime_next_lg_crcv) {
       /* Boundless fork: the handler has answered a streamed body's block
          before its next block is requested. */

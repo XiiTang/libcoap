@@ -91,6 +91,28 @@ typedef struct coap_runtime_capacity_t {
   uint8_t bert;
   uint8_t needs_first_response;
 } coap_runtime_capacity_t;
+/* Set application destination on the PDU, including while queued. */
+void coap_pdu_set_runtime_destination(coap_pdu_t *, const coap_address_t *);
+/* A veto is distinct from an accepted write, transport backpressure and I/O
+ * failure. The exact forget owner will remove a vetoed queued PDU. */
+#define COAP_RUNTIME_WRITE_VETO (-4)
+typedef int (*coap_runtime_preflight_t)(void *, const coap_bin_const_t *,
+                                       const coap_address_t *);
+typedef ssize_t (*coap_runtime_application_write_t)(
+    void *, const uint8_t *, size_t, const coap_bin_const_t *,
+    const coap_address_t *, int datagram);
+void coap_context_set_runtime_application_output(coap_context_t *,
+    coap_runtime_preflight_t, coap_runtime_application_write_t);
+int coap_session_runtime_resume_output(coap_session_t *);
+/* Called after response dispatch, before the following frame. A returned
+ * PDU transfers ownership to libcoap. It can replace the response's attempt;
+ * a protected Echo retry acknowledges the challenge before sending. */
+typedef coap_pdu_t *(*coap_runtime_continue_t)(coap_session_t *,
+    const coap_pdu_t *response, int *withdraw, int *ack_first);
+typedef void (*coap_runtime_continue_result_t)(coap_session_t *,
+    const coap_pdu_t *response, coap_mid_t result);
+void coap_context_set_runtime_continuation(coap_context_t *,
+    coap_runtime_continue_t, coap_runtime_continue_result_t);
 /* A read-only readiness and send limit snapshot. Never pumps I/O. */
 int coap_session_runtime_capacity(coap_session_t *, coap_runtime_capacity_t *);
 /* Attempt the ordinary optional insertion on an already allocated request.

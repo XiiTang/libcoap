@@ -57,6 +57,10 @@ struct coap_context_t {
   size_t runtime_maximum_pdu;
   uint8_t runtime_message_layer;
   coap_runtime_admit_response_t runtime_admit_response;
+  coap_runtime_preflight_t runtime_preflight;
+  coap_runtime_application_write_t runtime_application_write;
+  coap_runtime_continue_t runtime_continue;
+  coap_runtime_continue_result_t runtime_continue_result;
 #ifdef COAP_RUNTIME_TEST
   int runtime_refuse_initial_con;
   int runtime_refuse_close_notice;
@@ -293,6 +297,9 @@ coap_queue_t *coap_pop_next(coap_context_t *context);
  *                     COAP_INVALID_MID on error.
  */
 coap_mid_t coap_retransmit(coap_context_t *context, coap_queue_t *node);
+/* Process the raw client's due front entry in place so a final write veto
+ * does not record a retransmission or release credit. */
+int coap_runtime_retransmit_due(coap_context_t *context, coap_queue_t *node);
 
 /**
  * Parses and interprets a CoAP datagram with context @p ctx. This function
@@ -420,6 +427,10 @@ int coap_runtime_admit_input(coap_session_t *session, coap_pdu_t *pdu,
 
 /* Handle a duplicate before committing a protected response. */
 int coap_runtime_response_duplicate(coap_session_t *session, coap_pdu_t *pdu);
+int coap_runtime_preflight(coap_session_t *, const coap_pdu_t *);
+int coap_session_forget_runtime_tokens_lkd(coap_session_t *,
+    const coap_bin_const_t *, size_t);
+ssize_t coap_session_write_pdu(coap_session_t *, coap_pdu_t *, size_t offset);
 int coap_runtime_select_response(coap_session_t *session, coap_pdu_t *pdu,
                                  int protected_message);
 
