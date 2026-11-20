@@ -3618,11 +3618,17 @@ coap_dtls_new_client_session(coap_session_t *session) {
 
   session->dtls_timeout_count = 0;
 
+  ERR_clear_error();
   r = SSL_connect(ssl);
-  if (r == -1) {
+  if (r <= 0) {
     int ret = SSL_get_error(ssl, r);
-    if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE)
+    if (ret != SSL_ERROR_WANT_READ && ret != SSL_ERROR_WANT_WRITE) {
+      unsigned long e = ERR_peek_last_error();
+      if (ret == SSL_ERROR_SSL && ERR_GET_LIB(e) == ERR_LIB_SSL &&
+          ERR_GET_REASON(e) == SSL_R_READ_TIMEOUT_EXPIRED)
+        coap_handle_event_lkd(session->context, COAP_EVENT_DTLS_HANDSHAKE_TIMEOUT, session);
       r = 0;
+    }
   }
 
   if (r == 0)
@@ -3743,13 +3749,21 @@ coap_dtls_handle_timeout(coap_session_t *session) {
   SSL *ssl = (SSL *)session->tls;
 
   assert(ssl != NULL && session->state == COAP_SESSION_STATE_HANDSHAKE);
-  if ((++session->dtls_timeout_count > session->max_retransmit) ||
-      (DTLSv1_handle_timeout(ssl) < 0)) {
-    /* Too many retries */
-    coap_session_disconnected_lkd(session, COAP_NACK_TLS_FAILED);
-    return 1;
+  if (++session->dtls_timeout_count > session->max_retransmit) {
+    coap_handle_event_lkd(session->context, COAP_EVENT_DTLS_HANDSHAKE_TIMEOUT, session);
+  } else {
+    ERR_clear_error();
+    if (DTLSv1_handle_timeout(ssl) >= 0)
+      return 0;
+    unsigned long e = ERR_peek_last_error();
+    coap_handle_event_lkd(session->context,
+                         ERR_GET_LIB(e) == ERR_LIB_SSL &&
+                         ERR_GET_REASON(e) == SSL_R_READ_TIMEOUT_EXPIRED
+                         ? COAP_EVENT_DTLS_HANDSHAKE_TIMEOUT : COAP_EVENT_DTLS_ERROR,
+                         session);
   }
-  return 0;
+  coap_session_disconnected_lkd(session, COAP_NACK_TLS_FAILED);
+  return 1;
 }
 
 #if COAP_SERVER_SUPPORT
@@ -3865,7 +3879,9 @@ retry:
         coap_log_info("***%s: coap_dtls_receive: cannot recv PDU: %d: %s\n",
                       coap_session_str(session),
                       ERR_GET_REASON(e), ERR_reason_error_string(e));
-        session->dtls_event = COAP_EVENT_DTLS_ERROR;
+        session->dtls_event = in_init && ERR_GET_LIB(e) == ERR_LIB_SSL &&
+                              ERR_GET_REASON(e) == SSL_R_READ_TIMEOUT_EXPIRED ?
+                              COAP_EVENT_DTLS_HANDSHAKE_TIMEOUT : COAP_EVENT_DTLS_ERROR;
       } else {
         coap_log_info("***%s: coap_dtls_receive: cannot send PDU %d\n",
                       coap_session_str(session), err);
@@ -3875,6 +3891,7 @@ retry:
     if (session->dtls_event >= 0) {
       coap_handle_event_lkd(session->context, session->dtls_event, session);
       if (session->dtls_event == COAP_EVENT_DTLS_ERROR ||
+          session->dtls_event == COAP_EVENT_DTLS_HANDSHAKE_TIMEOUT ||
           session->dtls_event == COAP_EVENT_DTLS_CLOSED) {
         /* Cause disconnect on a read */
         coap_session_disconnected_lkd(session, COAP_NACK_TLS_FAILED);

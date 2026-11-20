@@ -489,3 +489,15 @@ Boundless's `reliable_oscore_checks_reserved_admission_and_the_complete_cipherte
 checks the initial reserve and a real protected TCP frame against CSM.
 `short_block2_head_publishes_bad_option_and_never_fetches` checks the code,
 accepted prefix and absence of a fetch at a UDP peer.
+
+## OpenSSL DTLS opening exhaustion
+
+Upstream's OpenSSL timer disconnects with TLS_FAILED for both libcoap retry
+exhaustion and a negative DTLSv1_handle_timeout. The close callback also
+occurs during ordinary native release and close_notify. Notify the existing
+event handler of opening exhaustion only at libcoap's retry limit or with
+OpenSSL's SSL_R_READ_TIMEOUT_EXPIRED from the current invocation. Other fatal
+retransmit errors signal DTLS_ERROR before the existing teardown. Keep ordinary
+native close and release behavior. Boundless consumes the event in the
+Controlled CoAP adapter. Its independent TinyDTLS peer exercises successful and
+wrong-key openings.

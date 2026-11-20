@@ -43,6 +43,8 @@ typedef enum {
   COAP_EVENT_DTLS_RENEGOTIATE  = 0x01DF,
   /** Triggered when (D)TLS error occurs */
   COAP_EVENT_DTLS_ERROR        = 0x0200,
+  /** Triggered when the opening DTLS handshake exhausts retransmission */
+  COAP_EVENT_DTLS_HANDSHAKE_TIMEOUT = 0x0201,
 
   /*
    * TCP events for COAP_PROTO_TCP and COAP_PROTO_TLS
